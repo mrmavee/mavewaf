@@ -1,0 +1,23 @@
+services:
+  mavewaf:
+    build: .
+    container_name: mavewaf
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - LISTEN_ADDR=0.0.0.0:8080
+      - INTERNAL_ADDR=127.0.0.1:8081
+      - BACKEND_URL=http://backend:9000
+    volumes:
+      - ./tor_keys/mave:/var/lib/tor/hidden_service/
+      - ./torrc:/etc/tor/torrc:ro
+      - ./i2p_keys:/var/lib/i2pd/
+      - ./i2pd.conf:/etc/i2pd/i2pd.conf:ro
+      - ./tunnels.conf:/etc/i2pd/tunnels.conf:ro
+    networks:
+      - mave-net
+
+networks:
+  mave-net:
+    driver: bridge

@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  REGISTRY: git.mrmave.work
+  IMAGE_NAME: maverick/mavewaf
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Verify Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v6
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang pkg-config libssl-dev
+
+      - name: Setup Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component clippy,rustfmt
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Run Tests
+        run: cargo test --verbose
+
+  docker:
+    name: Build Docker
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Install git-cliff
+        run: |
+          curl -sL https://github.com/orhun/git-cliff/releases/download/v2.11.0/git-cliff-2.11.0-x86_64-unknown-linux-gnu.tar.gz -o git-cliff.tar.gz
+          tar -xzf git-cliff.tar.gz
+          sudo mv git-cliff-*/git-cliff /usr/local/bin/
+          git-cliff --version
+
+      - name: Generate Release Notes
+        run: |
+          git-cliff --config cliff.toml --latest -o CHANGELOG.md
+          echo "=== Release Notes ==="
+          cat CHANGELOG.md
+
+      - name: Create Release
+        run: |
+          BODY=$(cat CHANGELOG.md)
+          curl -sS -X POST \
+            -H "Authorization: token ${{ secrets.PACKAGES_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg tag "${{ github.ref_name }}" --arg body "$BODY" '{tag_name: $tag, name: $tag, body: $body}')" \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases" > /dev/null
+
+      - name: Setup Buildx
+        uses: https://code.forgejo.org/docker/setup-buildx-action@v3
+
+      - name: Login to Registry
+        uses: https://code.forgejo.org/docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.PACKAGES_TOKEN }}
+
+      - name: Login to Docker Hub
+        uses: https://code.forgejo.org/docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Metadata
+        id: meta
+        uses: https://code.forgejo.org/docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/mavewaf
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=true
+
+      - name: Build and Push
+        id: build
+        uses: https://code.forgejo.org/docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Cosign
+        run: |
+          curl -sLO https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64
+          chmod +x cosign-linux-amd64
+          sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+
+      - name: Sign Container Image
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          echo "$COSIGN_KEY" > /tmp/cosign.key
+          cosign sign --yes --use-signing-config=false --key /tmp/cosign.key \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
+          rm /tmp/cosign.key

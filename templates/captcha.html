@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="title" content="{{META_TITLE}}">
+    <meta name="description" content="{{META_DESCRIPTION}}">
+    <meta name="keywords" content="{{META_KEYWORDS}}">
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" href="{{FAVICON}}">
+    <title>{{META_TITLE}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #111;
+            color: #d1d5db;
+            min-height: 100vh;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem
+        }
+
+        .card {
+            width: 100%;
+            max-width: 400px;
+            background: #1a1a1a;
+            border: 1px solid rgba(255, 255, 255, .1);
+            border-radius: .5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, .25);
+            padding: 1.25rem;
+
+        }
+
+        @media(min-width:640px) {
+            .card {
+                padding: 2.5rem
+            }
+        }
+
+        h2 {
+            color: #fff;
+            font-weight: 600;
+            font-size: 1.5rem;
+            margin-bottom: 1.25rem;
+            text-align: center
+        }
+
+        .err {
+            background: rgba(239, 68, 68, .1);
+            border: 1px solid rgba(239, 68, 68, .2);
+            color: #f87171;
+            padding: 1rem;
+            border-radius: .5rem;
+            font-size: 1rem;
+            margin-bottom: 1.25rem;
+            text-align: center
+        }
+
+        .input-box {
+            margin-bottom: 1.25rem
+        }
+
+        .input-row {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+            flex-wrap: wrap;
+            position: relative;
+            padding-top: 170px;
+        }
+
+        .ch {
+            text-align: center;
+            text-transform: uppercase;
+            background: #262626;
+            border: 1px solid rgba(255, 255, 255, .1);
+            color: #3b82f6;
+            font-size: 1.25rem;
+            line-height: 2.5rem;
+            width: 2.5rem;
+            height: 2.5rem;
+            border-radius: .375rem;
+            font-family: ui-monospace, monospace;
+            flex-shrink: 0
+        }
+
+        .ch:focus {
+            border-color: #3b82f6;
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, .3)
+        }
+
+        .image {
+            width: 20px;
+            height: 20px;
+            transform-origin: center;
+            transform: scale(7);
+            transition: all .2s ease-in;
+            border-radius: 50%;
+            border: 1px solid #3b82f6;
+
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            margin-left: -10px;
+
+            pointer-events: none;
+            background-color: #1a1e23;
+            background-size: 160px 160px;
+            background-position: center
+        }
+
+        .submit-btn {
+            width: 100%;
+            background: #3b82f6;
+            color: #fff;
+            font-size: 1.125rem;
+            font-weight: 500;
+            padding: .875rem;
+            border: none;
+            border-radius: .375rem;
+            cursor: pointer;
+            transition: background .2s
+        }
+
+        .submit-btn:hover {
+            background: #2563eb
+        }
+
+        .hint {
+            font-size: .875rem;
+            color: #9ca3af;
+            margin-top: 1.25rem;
+            text-align: center
+        }
+
+        .timer {
+            font-size: 1rem;
+            color: #9ca3af;
+            margin-bottom: 1.25rem;
+            text-align: center
+        }
+
+        .footer {
+            position: fixed;
+            bottom: 1.5rem;
+            text-align: center;
+            width: 100%
+        }
+
+        .footer span {
+            font-size: .875rem;
+            color: #9ca3af;
+            font-family: ui-monospace, monospace
+        }
+    </style>
+    {{ZOOM_CSS}}
+</head>
+
+<body>
+    <div class="card">
+        <h2>Security Check</h2>
+        {{ERROR_MESSAGE}}
+        <form method="POST" action="/">
+            <input type="hidden" name="s" value="{{STATE_TOKEN}}">
+            <div class="input-box">
+                <div class="input-row">
+                    {{CAPTCHA_INPUTS}}
+                    <div class="image" style="background-image:url({{CAPTCHA_IMAGE}})"></div>
+                </div>
+            </div>
+            <div class="timer">Expires in {{TTL_DISPLAY}}</div>
+            <button type="submit" class="submit-btn">Verify</button>
+        </form>
+        <p class="hint">Click each box and type the character shown above.</p>
+    </div>
+    <div class="footer"><span>&copy; {{APP_NAME}} &bull; Protected by MaveWAF</span></div>
+</body>
+
+</html>

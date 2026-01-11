@@ -1,0 +1,30 @@
+# Hidden Service Configuration
+HiddenServiceDir /var/lib/tor/hidden_service/
+
+# Map port 80 (Onion) to MaveWAF port 8080 (Localhost via Sidecar)
+HiddenServicePort 80 127.0.0.1:8080
+
+# Logging
+Log notice stdout
+DataDirectory /var/lib/tor
+
+# Control Port for MaveWAF defense mechanisms (PoW, Circuit Killing)
+ControlPort 127.0.0.1:9051
+HashedControlPassword 16:F8DE191E51A74E8460760AECD644FF92BD255544FAD9153CC93579F2AD
+
+# Export Circuit ID via PROXY protocol
+HiddenServiceExportCircuitID haproxy
+
+# Proof-of-Work
+HiddenServicePoWDefensesEnabled 1
+HiddenServicePoWQueueRate 50
+HiddenServicePoWQueueBurst 100
+
+# Intro Rate Limiting
+HiddenServiceEnableIntroDoSDefense 1
+HiddenServiceEnableIntroDoSRatePerSec 10
+HiddenServiceEnableIntroDoSBurstPerSec 50
+
+# Stream Limiting
+HiddenServiceMaxStreams 20
+HiddenServiceMaxStreamsCloseCircuit 1

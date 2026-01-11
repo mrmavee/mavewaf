@@ -1,0 +1,32 @@
+FROM rust:1.92-alpine AS base
+RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig make perl git cmake clang build-base
+RUN cargo install cargo-chef
+WORKDIR /app
+
+FROM base AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM base AS builder
+COPY --from=planner /app/recipe.json recipe.json
+ENV OPENSSL_STATIC=1
+RUN cargo chef cook --release --recipe-path recipe.json --examples
+COPY . .
+RUN cargo build --release
+RUN cargo build --release --example mock_backend
+
+FROM alpine:latest
+RUN apk add --no-cache tor i2pd ca-certificates su-exec
+
+RUN addgroup -S mavewaf && adduser -S mavewaf -G mavewaf
+WORKDIR /app
+
+COPY --from=builder /app/target/release/mavewaf /app/mavewaf
+COPY --from=builder /app/target/release/examples/mock_backend /mock_backend
+COPY --from=builder /app/templates /app/templates
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+RUN chown -R mavewaf:mavewaf /app
+EXPOSE 8080 8081
+ENTRYPOINT ["/entrypoint.sh"]

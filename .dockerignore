@@ -1,0 +1,7 @@
+target/
+.git/
+.env
+tor_keys/
+torrc
+i2p_keys/
+.forgejo/

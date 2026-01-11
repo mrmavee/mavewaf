@@ -1,0 +1,9 @@
+/target
+/tor_keys
+.env
+venv/
+__pycache__/
+*.pyc
+private-network/
+forgejo-runner-config.yaml
+i2p_keys/

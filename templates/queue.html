@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="title" content="{{META_TITLE}}">
+    <meta name="description" content="{{META_DESCRIPTION}}">
+    <meta name="keywords" content="{{META_KEYWORDS}}">
+    <meta name="robots" content="noindex, nofollow">
+    <meta http-equiv="refresh" content="{{WAIT_TIME}};url=/captcha">
+    <link rel="icon" href="{{FAVICON}}">
+    <title>{{META_TITLE}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #111;
+            color: #d1d5db;
+            min-height: 100vh;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem
+        }
+
+        .card {
+            width: 100%;
+            max-width: 400px;
+            background: #1a1a1a;
+            border: 1px solid rgba(255, 255, 255, .1);
+            border-radius: .5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, .25);
+            padding: 2rem
+        }
+
+        @media(min-width:640px) {
+            .card {
+                padding: 2.5rem
+            }
+        }
+
+        .content {
+            text-align: center;
+            padding: 1rem 0
+        }
+
+        .loader-box {
+            height: 5rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: .5rem;
+            margin-bottom: 2rem
+        }
+
+        .loader-bar {
+            width: 8px;
+            background: #3b82f6;
+            border-radius: 99px;
+            animation: wave 1.2s ease-in-out infinite
+        }
+
+        .loader-bar:nth-child(1) {
+            animation-delay: 0s;
+            height: 24px
+        }
+
+        .loader-bar:nth-child(2) {
+            animation-delay: .1s;
+            height: 40px
+        }
+
+        .loader-bar:nth-child(3) {
+            animation-delay: .2s;
+            height: 52px
+        }
+
+        .loader-bar:nth-child(4) {
+            animation-delay: .3s;
+            height: 36px
+        }
+
+        .loader-bar:nth-child(5) {
+            animation-delay: .4s;
+            height: 24px
+        }
+
+        @keyframes wave {
+
+            0%,
+            100% {
+                height: 18px;
+                opacity: .5
+            }
+
+            50% {
+                height: 48px;
+                opacity: 1
+            }
+        }
+
+        h2 {
+            color: #fff;
+            font-weight: 600;
+            font-size: 1.5rem;
+            margin-bottom: .75rem
+        }
+
+        .desc {
+            font-size: 1rem;
+            color: #9ca3af;
+            line-height: 1.6
+        }
+
+        .info-bar {
+            margin-top: 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid rgba(255, 255, 255, .1);
+            padding-top: 1.25rem
+        }
+
+        .label {
+            font-size: .875rem;
+            color: #6b7280;
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: .05em
+        }
+
+        .value {
+            font-size: 1rem;
+            color: #60a5fa;
+            font-family: ui-monospace, monospace
+        }
+
+        .footer {
+            position: fixed;
+            bottom: 1.5rem;
+            text-align: center;
+            width: 100%
+        }
+
+        .footer span {
+            font-size: .875rem;
+            color: #9ca3af;
+            font-family: ui-monospace, monospace
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="content">
+            <div class="loader-box">
+                <div class="loader-bar"></div>
+                <div class="loader-bar"></div>
+                <div class="loader-bar"></div>
+                <div class="loader-bar"></div>
+                <div class="loader-bar"></div>
+            </div>
+            <h2>Please Wait</h2>
+            <p class="desc">We are verifying your connection. You will be redirected shortly.</p>
+            <div class="info-bar"><span class="label">Wait Time</span><span class="value">~{{WAIT_TIME}}s</span></div>
+        </div>
+    </div>
+    <div class="footer"><span>&copy; {{APP_NAME}} &bull; Protected by MaveWAF</span></div>
+</body>
+
+</html>

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1.0">
+    <meta name="title" content="{{META_TITLE}}">
+    <meta name="description" content="{{META_DESCRIPTION}}">
+    <meta name="keywords" content="{{META_KEYWORDS}}">
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="icon" href="{{FAVICON}}">
+    <title>{{META_TITLE}}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #111;
+            color: #d1d5db;
+            min-height: 100vh;
+            width: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1.5rem
+        }
+
+        .card {
+            width: 100%;
+            max-width: 400px;
+            background: #1a1a1a;
+            border: 1px solid rgba(255, 255, 255, .1);
+            border-radius: .5rem;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, .25);
+            padding: 2rem
+        }
+
+        @media(min-width:640px) {
+            .card {
+                padding: 2.5rem
+            }
+        }
+
+        .header {
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem
+        }
+
+        .icon-box {
+            flex-shrink: 0;
+            width: 2.5rem;
+            height: 2.5rem;
+            background: rgba(239, 68, 68, .15);
+            border-radius: .375rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(239, 68, 68, .25);
+            color: #ef4444;
+            font-size: 1.25rem;
+            font-weight: bold
+        }
+
+        h1 {
+            color: #fff;
+            font-weight: 600;
+            font-size: 1.25rem
+        }
+
+        .desc {
+            font-size: 1rem;
+            color: #9ca3af;
+            margin-top: .375rem;
+            line-height: 1.6
+        }
+
+        .meta {
+            margin-top: 1.75rem;
+            background: #141414;
+            border-radius: .5rem;
+            padding: 1rem;
+            border: 1px solid rgba(255, 255, 255, .1)
+        }
+
+        .meta-row {
+            display: flex;
+            justify-content: space-between;
+            padding: .375rem 0;
+            font-size: .875rem
+        }
+
+        .meta-row:not(:last-child) {
+            border-bottom: 1px solid rgba(255, 255, 255, .05)
+        }
+
+        .label {
+            color: #6b7280;
+            text-transform: uppercase;
+            font-size: .75rem
+        }
+
+        .value {
+            color: #d1d5db;
+            font-family: ui-monospace, monospace;
+            text-align: right
+        }
+
+        .footer {
+            position: fixed;
+            bottom: 1.5rem;
+            text-align: center;
+            width: 100%
+        }
+
+        .footer span {
+            font-size: .875rem;
+            color: #9ca3af;
+            font-family: ui-monospace, monospace
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <div class="header">
+            <div class="icon-box">!</div>
+            <div>
+                <h1>{{TITLE}}</h1>
+                <p class="desc">{{DESCRIPTION}}</p>
+            </div>
+        </div>
+        <div class="meta">
+            {{DETAILS}}
+            <div class="meta-row"><span class="label">Time</span><span class="value">{{TIMESTAMP}}</span></div>
+        </div>
+    </div>
+    <div class="footer"><span>&copy; {{APP_NAME}} &bull; Protected by MaveWAF</span></div>
+</body>
+
+</html>
