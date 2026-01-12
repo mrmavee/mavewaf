@@ -88,8 +88,12 @@ impl RuleEngine {
         let mut matched_rules = Vec::new();
 
         let path_dec = percent_decode_str(path).decode_utf8_lossy();
-        let query_dec = percent_decode_str(query).decode_utf8_lossy();
-        let body_dec = percent_decode_str(body).decode_utf8_lossy();
+        let query_dec = percent_decode_str(query)
+            .decode_utf8_lossy()
+            .replace('+', " ");
+        let body_dec = percent_decode_str(body)
+            .decode_utf8_lossy()
+            .replace('+', " ");
         let cookie_dec = percent_decode_str(cookie).decode_utf8_lossy();
 
         let inputs = [

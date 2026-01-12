@@ -104,6 +104,11 @@ impl WafEngine {
             inputs_to_scan.push(double_decoded.as_ref());
         }
 
+        let plus_decoded = decoded_input.replace('+', " ");
+        if plus_decoded != decoded_input {
+            inputs_to_scan.push(plus_decoded.as_ref());
+        }
+
         for check_input in inputs_to_scan {
             let sqli_res = libinjectionrs::detect_sqli(check_input.as_bytes());
             if sqli_res.is_injection() {
@@ -401,6 +406,17 @@ mod tests {
         let engine = WafEngine::new(notifier, vec![]);
 
         let result = engine.scan("/login?user=' OR 1=1--", "test_loc");
+        assert!(result.blocked);
+    }
+
+    #[test]
+    fn test_waf_scan_sql_injection_plus_blocked() {
+        let config = Arc::new(create_test_config());
+        let notifier = Arc::new(WebhookNotifier::new(&config));
+        let engine = WafEngine::new(notifier, vec![]);
+
+        let result = engine.scan("/search?q=UNION+SELECT+1", "test_loc");
+
         assert!(result.blocked);
     }
 }
