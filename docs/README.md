@@ -153,5 +153,7 @@ COOP_POLICY=same-origin
 COEP_ENABLED=true
 ```
 
+_Note: Even if `CSP_EXTRA_SOURCES` is enabled, Tor Browser's "Safest" mode may still block external resources (like fonts or scripts) regardless of your CSP settings._
+
 > For more information on HTTP headers, please refer to the [MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers).
 

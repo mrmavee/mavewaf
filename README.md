@@ -69,8 +69,11 @@ graph LR
 ### Docker (Recommended)
 
 ```bash
-# Pull image
+# Pull image (Docker Hub)
 docker pull mrmave/mavewaf:latest
+
+# Alternative: Pull from Private Forgejo Registry
+docker pull git.mrmave.work/maverick/mavewaf:latest
 
 # Configure
 cp docs/.env.example .env
@@ -83,7 +86,12 @@ docker compose up -d
 ### Building from Source
 
 ```bash
+# Clearnet
 git clone https://git.mrmave.work/maverick/mavewaf.git
+
+# Tor / Onion Service
+git -c http.proxy=socks5h://127.0.0.1:9050 clone http://mavegitwskioz7tpppmjtj7fn24pwezciii3nvc7kdyltn5iu5uakfqd.onion/mavewaf
+
 cd mavewaf
 cargo build --release
 ./target/release/mavewaf
@@ -160,6 +168,10 @@ LOG_FORMAT=json         # Structured output
 ```
 
 All security events include: `circuit_id`, `http_method`, `http_path`, `action`, `rule`.
+
+## Limitations
+
+- **Onion Balancer**: Currently not supported. This is planned for future development to allow scaling across multiple backend instances.
 
 ## License
 
