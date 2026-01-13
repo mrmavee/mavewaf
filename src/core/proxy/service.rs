@@ -8,6 +8,7 @@ use crate::core::middleware::{
     EncryptedSession, RateLimiter, SESSION_COOKIE_NAME, generate_session_id,
 };
 use crate::core::proxy::headers::inject_security_headers;
+use crate::core::proxy::response::serve_html;
 use crate::core::proxy::router::WafRouter;
 use crate::features::tor::{circuit, control::TorControl};
 use crate::features::webhook::{EventType, WebhookNotifier, WebhookPayload};
@@ -36,6 +37,7 @@ pub struct RequestCtx {
     pub body_buffer: Vec<u8>,
     pub skip_body_scan: bool,
 }
+
 /// Main proxy service implementing `ProxyHttp`.
 pub struct MaveProxy {
     config: Arc<Config>,
@@ -86,37 +88,6 @@ impl MaveProxy {
         }
     }
 
-    async fn serve_html(
-        &self,
-        session: &mut Session,
-        status: u16,
-        html: String,
-        set_cookie: Option<&str>,
-    ) -> Result<bool> {
-        let mut header = ResponseHeader::build(status, None)?;
-        header.insert_header("Content-Type", "text/html; charset=utf-8")?;
-        header.insert_header("Content-Length", html.len().to_string())?;
-        header.insert_header(
-            "Cache-Control",
-            "no-store, no-cache, must-revalidate, max-age=0",
-        )?;
-        header.insert_header("Expires", "0")?;
-
-        if let Some(cookie) = set_cookie {
-            header.insert_header("Set-Cookie", cookie)?;
-        }
-
-        inject_security_headers(&mut header, &self.config)?;
-
-        session
-            .write_response_header(Box::new(header), false)
-            .await?;
-        session
-            .write_response_body(Some(bytes::Bytes::from(html)), true)
-            .await?;
-        Ok(true)
-    }
-
     async fn kill_circuit_if_possible(&self, circuit_id: Option<&str>) {
         if let (Some(tor), Some(cid)) = (&self.tor_control, circuit_id)
             && !cid.starts_with("i2p:")
@@ -125,6 +96,7 @@ impl MaveProxy {
             warn!(circuit_id = %cid, error = %e, "Failed to kill circuit");
         }
     }
+
     async fn handle_waf_and_router(
         &self,
         session: &mut Session,
@@ -162,7 +134,7 @@ impl MaveProxy {
                 &request_id,
                 &self.config,
             );
-            return self.serve_html(session, 403, html, None).await;
+            return serve_html(session, &self.config, 403, html, None).await;
         }
 
         if self.waf_router.handle_request(session, ctx).await? {
@@ -365,7 +337,7 @@ impl ProxyHttp for MaveProxy {
                 None,
                 Some(&self.config),
             );
-            return self.serve_html(session, 403, html, None).await;
+            return serve_html(session, &self.config, 403, html, None).await;
         }
 
         let is_static = Self::is_static_asset(session);
@@ -378,7 +350,7 @@ impl ProxyHttp for MaveProxy {
                     None,
                     Some(&self.config),
                 );
-                return self.serve_html(session, 429, html, None).await;
+                return serve_html(session, &self.config, 429, html, None).await;
             }
 
             if let Some(ref key) = ctx.rate_key

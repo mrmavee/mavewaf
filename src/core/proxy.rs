@@ -8,8 +8,10 @@ pub mod headers;
 pub mod listener;
 pub mod pool;
 pub mod protocol;
+pub mod response;
 pub mod router;
 pub mod service;
 
 pub use pool::{UpstreamPool, create_pool};
+pub use response::{parse_form_submission, serve_html, serve_redirect};
 pub use service::MaveProxy;
