@@ -9,8 +9,14 @@ chown tor:root $TOR_LOG
 
 echo "[entrypoint] Setting up permissions..."
 if [ -d "/var/lib/tor" ]; then
+    echo "[entrypoint] Securing Tor permissions..."
     chown -R tor:root /var/lib/tor
     chmod 700 /var/lib/tor
+    if [ -d "/var/lib/tor/hidden_service" ]; then
+        echo "[entrypoint] Fixing hidden_service permissions..."
+        chown -R tor:root /var/lib/tor/hidden_service
+        chmod 700 /var/lib/tor/hidden_service
+    fi
 fi
 
 echo "[entrypoint] Starting Tor..."

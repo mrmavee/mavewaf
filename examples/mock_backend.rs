@@ -10,18 +10,20 @@ use tokio::net::TcpListener;
 
 async fn hello(req: Request<hyper::body::Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
     let path = req.uri().path();
-    match path {
-        "/" => Ok(Response::new(Full::new(Bytes::from(
-            "Hello from Mock Backend!",
-        )))),
-        "/login" => Ok(Response::new(Full::new(Bytes::from("Login Page")))),
-        "/admin" => Ok(Response::new(Full::new(Bytes::from("Admin Dashboard")))),
-        _ => {
-            let mut response = Response::new(Full::new(Bytes::from("404 Not Found")));
-            *response.status_mut() = StatusCode::NOT_FOUND;
-            Ok(response)
-        }
-    }
+    let (body, status) = match path {
+        "/" => (Bytes::from("Hello from Mock Backend!"), StatusCode::OK),
+        "/login" => (Bytes::from("Login Page"), StatusCode::OK),
+        "/admin" => (Bytes::from("Admin Dashboard"), StatusCode::OK),
+        _ => (Bytes::from("404 Not Found"), StatusCode::NOT_FOUND),
+    };
+
+    let response = Response::builder()
+        .status(status)
+        .header("Content-Type", "text/plain")
+        .body(Full::new(body))
+        .unwrap();
+
+    Ok(response)
 }
 
 #[tokio::main]
