@@ -54,6 +54,37 @@ pub fn get_queue_page(wait_time_secs: u64, request_id: &str, config: &Config) ->
         .replace("{{META_KEYWORDS}}", &config.meta_keywords)
 }
 
+fn format_timestamp(ts: u64) -> String {
+    let days = ts / 86400;
+    let seconds = ts % 86400;
+    let (year, month, day) = date_from_days(days);
+    let hour = seconds / 3600;
+    let minute = (seconds % 3600) / 60;
+    let second = seconds % 60;
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} UTC")
+}
+
+fn date_from_days(mut days: u64) -> (u64, u8, u8) {
+    let mut year = 1970;
+    loop {
+        let is_leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+        let year_days = if is_leap { 366 } else { 365 };
+        if days < year_days {
+            let mut month = 1;
+            let days_in_month = [31, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            for &dim in &days_in_month {
+                if days < dim {
+                    return (year, month, u8::try_from(days + 1).unwrap_or(1));
+                }
+                days -= dim;
+                month += 1;
+            }
+        }
+        days -= year_days;
+        year += 1;
+    }
+}
+
 /// Renders the CAPTCHA challenge page.
 #[must_use]
 pub fn get_captcha_page(
@@ -68,10 +99,11 @@ pub fn get_captcha_page(
     let template = load_template("captcha.html")
         .unwrap_or_else(|| "<html><body><h1>Security Check Error</h1></body></html>".to_string());
 
-    let timestamp = SystemTime::now()
+    let timestamp_val = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let timestamp = format_timestamp(timestamp_val);
 
     let ttl_display = if ttl_secs >= 60 {
         format!("{} minutes", ttl_secs / 60)
@@ -131,7 +163,7 @@ pub fn get_captcha_page(
     template
         .replace("{{STATE_TOKEN}}", s)
         .replace("{{CAPTCHA_IMAGE}}", img_b64)
-        .replace("{{TIMESTAMP}}", &timestamp.to_string())
+        .replace("{{TIMESTAMP}}", &timestamp)
         .replace("{{TTL_DISPLAY}}", &ttl_display)
         .replace("{{TTL_DISPLAY}}", &ttl_display)
         .replace("{{ERROR_MESSAGE}}", error_html)
@@ -152,10 +184,11 @@ pub fn get_error_page(
     details: Option<Vec<(&str, &str)>>,
     config: Option<&Config>,
 ) -> String {
-    let timestamp = SystemTime::now()
+    let timestamp_val = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
+    let timestamp = format_timestamp(timestamp_val);
 
     let template = load_template("error.html").unwrap_or_else(|| {
         format!(
@@ -178,7 +211,7 @@ pub fn get_error_page(
         .replace("{{TITLE}}", title)
         .replace("{{DESCRIPTION}}", description)
         .replace("{{DETAILS}}", &details_html)
-        .replace("{{TIMESTAMP}}", &timestamp.to_string())
+        .replace("{{TIMESTAMP}}", &timestamp)
         .replace("{{APP_NAME}}", config.map_or("", |c| c.app_name.as_str()))
         .replace(
             "{{FAVICON}}",
