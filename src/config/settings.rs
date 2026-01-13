@@ -356,7 +356,9 @@ mod tests {
 
     #[test]
     fn test_helpers_defaults() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe {
             env::remove_var("TEST_MISSING_VAR");
         }
@@ -370,7 +372,9 @@ mod tests {
 
     #[test]
     fn test_helpers_parsing() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe {
             env::set_var("TEST_P1", "123");
             assert_eq!(get_env_u32("TEST_P1"), 123);
@@ -389,7 +393,9 @@ mod tests {
     #[test]
     #[should_panic(expected = "TEST_REQ must be set")]
     fn test_get_env_panic() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe {
             env::remove_var("TEST_REQ");
         }
@@ -398,7 +404,9 @@ mod tests {
 
     #[test]
     fn test_config_from_env_defaults() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         unsafe {
             env::remove_var("WAF_MODE");
             env::set_var("LISTEN_ADDR", "127.0.0.1:9090");
@@ -422,8 +430,10 @@ mod tests {
 
     #[test]
     fn test_config_with_logo_path() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         use std::io::Write;
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         let png_bytes: [u8; 70] = [
             0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,

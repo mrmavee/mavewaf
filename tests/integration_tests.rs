@@ -1103,9 +1103,10 @@ async fn test_queue_bypass_protection() {
         .unwrap();
 
     let text_early = resp_early.text().await.unwrap();
-    if !text_early.contains("Please Wait") {
-        panic!("Expected Queue page, got: {}", text_early);
-    }
+    assert!(
+        text_early.contains("Please Wait"),
+        "Expected Queue page, got: {text_early}"
+    );
 
     let session_valid = EncryptedSession {
         session_id: "test_bypass_valid".to_string(),

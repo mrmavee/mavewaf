@@ -209,13 +209,24 @@ async fn process_request(
 
     modified_request.push_str("\r\n");
 
-    upstream.write_all(modified_request.as_bytes()).await?;
-
     let request_lower = request_str.to_lowercase();
     let has_transfer_encoding = request_lower.contains("transfer-encoding:");
-    let content_length: usize = request_str
+
+    let content_length_headers: Vec<&str> = request_str
         .lines()
-        .find(|l| l.to_lowercase().starts_with("content-length:"))
+        .filter(|l| l.to_lowercase().starts_with("content-length:"))
+        .collect();
+
+    if content_length_headers.len() > 1 {
+        warn!(
+            action = "REJECT",
+            "Duplicate Content-Length headers detected"
+        );
+        return Ok(None);
+    }
+
+    let content_length: usize = content_length_headers
+        .first()
         .and_then(|l| l.split_once(':').map(|(_, v)| v))
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(0);
@@ -232,6 +243,8 @@ async fn process_request(
         warn!(action = "REJECT", "Chunked Transfer-Encoding not supported");
         return Ok(None);
     }
+
+    upstream.write_all(modified_request.as_bytes()).await?;
 
     if content_length > 0 {
         let mut body = vec![0u8; content_length];
@@ -580,5 +593,39 @@ mod tests {
 
         let res = client_task.await.unwrap();
         assert!(res.contains("Transfer-Encoding: chunked") || res.contains("Hello"));
+    }
+    #[tokio::test]
+    async fn test_duplicate_content_length() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream.local_addr().unwrap();
+
+        let _server_task = tokio::spawn(async move {
+            let (mut socket, _) = upstream.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = socket.read(&mut buf).await.unwrap();
+
+            assert_eq!(n, 0, "Proxy forwarded duplicate Content-Length headers!");
+        });
+
+        let dummy_client_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dummy_client_addr = dummy_client_listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let mut stream = TcpStream::connect(dummy_client_addr).await.unwrap();
+            stream
+                .write_all(
+                    b"POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nHello",
+                )
+                .await
+                .unwrap();
+        });
+
+        let (mut client_stream, _) = dummy_client_listener.accept().await.unwrap();
+        let mut upstream_conn = TcpStream::connect(upstream_addr).await.unwrap();
+
+        let result = process_request(&mut client_stream, &mut upstream_conn, None).await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
     }
 }
