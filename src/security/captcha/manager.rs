@@ -98,6 +98,12 @@ impl CaptchaManager {
     pub fn verify(&self, token: &str, answer: &str) -> bool {
         self.generator.verify(token, answer)
     }
+
+    /// Creates a token for a given input.
+    #[must_use]
+    pub fn create_token(&self, input: &str) -> String {
+        self.generator.create_token(input)
+    }
 }
 
 #[cfg(test)]

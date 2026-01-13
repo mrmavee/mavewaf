@@ -962,3 +962,102 @@ async fn test_queue_explicit_wait() {
     );
     assert!(set_cookie.contains(SESSION_COOKIE_NAME));
 }
+
+#[tokio::test]
+async fn test_defense_mode_access_page() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    config.features.captcha_enabled = false;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("X-Circuit-Id", "test_access")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let text = resp.text().await.unwrap();
+    assert!(text.contains("Wait Time") || text.contains("Queue"));
+
+    let crypto = CookieCrypto::new(&config.session_secret);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let session_ready = EncryptedSession {
+        session_id: "test_access".to_string(),
+        verified: false,
+        verified_at: 0,
+        created_at: now - 10,
+        queue_started_at: now - 10,
+        queue_completed: false,
+        ..Default::default()
+    };
+    let cookie_val = crypto.encrypt(&session_ready.to_bytes());
+    let cookie_ready = format!("{SESSION_COOKIE_NAME}={cookie_val}");
+
+    let resp_ready = client
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("X-Circuit-Id", "test_access")
+        .header("Cookie", cookie_ready.clone())
+        .send()
+        .await
+        .unwrap();
+
+    let cookie_final = resp_ready
+        .headers()
+        .get("set-cookie")
+        .map(|c| c.to_str().unwrap().to_string());
+
+    let text_ready = resp_ready.text().await.unwrap();
+    assert!(text_ready.contains("Security Check"));
+    assert!(text_ready.contains("Click to Enter"));
+
+    let token_input = text_ready.split("name=\"s\" value=\"").nth(1).unwrap();
+    let token = token_input.split('"').next().unwrap();
+
+    let cookie_to_use = cookie_final.unwrap_or(cookie_ready);
+
+    let body_str = format!("s={token}");
+    let resp_post = client
+        .post(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("X-Circuit-Id", "test_access")
+        .header("Cookie", cookie_to_use)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body_str)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp_post.status(), 303);
+    assert_eq!(resp_post.headers().get("location").unwrap(), "/");
+
+    let verified_cookie = resp_post
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap();
+
+    let resp_verified = client
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("X-Circuit-Id", "test_access")
+        .header("Cookie", verified_cookie)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp_verified.status(), 200);
+    assert_eq!(resp_verified.text().await.unwrap(), "Hello");
+}

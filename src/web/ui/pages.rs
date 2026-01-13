@@ -20,7 +20,7 @@ static TEMPLATES: OnceLock<HashMap<String, String>> = OnceLock::new();
 fn load_template(filename: &str) -> Option<String> {
     let templates = TEMPLATES.get_or_init(|| {
         let mut m = HashMap::new();
-        for name in &["queue.html", "captcha.html", "error.html"] {
+        for name in &["queue.html", "captcha.html", "error.html", "access.html"] {
             let path = Path::new(TEMPLATE_DIR).join(name);
             match fs::read_to_string(&path) {
                 Ok(content) => {
@@ -210,6 +210,21 @@ pub fn get_block_page(reason: &str, request_id: &str, config: &Config) -> String
     )
 }
 
+/// Renders the access page.
+#[must_use]
+pub fn get_access_page(s: &str, config: &Config) -> String {
+    let template = load_template("access.html")
+        .unwrap_or_else(|| "<html><body><h1>Security Check</h1></body></html>".to_string());
+
+    template
+        .replace("{{STATE_TOKEN}}", s)
+        .replace("{{APP_NAME}}", &config.app_name)
+        .replace("{{FAVICON}}", &config.favicon_base64)
+        .replace("{{META_TITLE}}", &config.meta_title)
+        .replace("{{META_DESCRIPTION}}", &config.meta_description)
+        .replace("{{META_KEYWORDS}}", &config.meta_keywords)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -297,5 +312,14 @@ mod tests {
             &config,
         );
         assert!(html.contains("Security Check") || html.contains("img_b64"));
+    }
+
+    #[test]
+    fn test_render_access_page() {
+        let config = create_dummy_config();
+        let html = get_access_page("test_token", &config);
+        assert!(html.contains("Security Check"));
+        assert!(html.contains("test_token"));
+        assert!(html.contains("Click to Enter"));
     }
 }

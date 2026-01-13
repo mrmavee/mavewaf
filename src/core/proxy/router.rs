@@ -113,6 +113,13 @@ impl WafRouter {
             && method == pingora::http::Method::POST
             && let Ok(Some(body)) = session.read_request_body().await
         {
+            if !self.config.features.captcha_enabled {
+                return self
+                    .handler
+                    .handle_access_verify(session, ctx, &body, now)
+                    .await;
+            }
+
             let queue_ok = session_state.as_ref().is_some_and(|s| s.queue_completed);
             if !queue_ok {
                 return self.handler.serve_queue_page(session, ctx, now).await;
@@ -135,6 +142,10 @@ impl WafRouter {
         {
             let waited = now.saturating_sub(sess.queue_started_at);
             if waited >= 5 {
+                if !self.config.features.captcha_enabled {
+                    return self.handler.serve_access_page(session, ctx).await;
+                }
+
                 let mut new_session = sess.clone();
                 new_session.queue_completed = true;
                 new_session.captcha_gen_count = 1;

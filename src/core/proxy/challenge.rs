@@ -275,6 +275,89 @@ impl ChallengeHandler {
         }
     }
 
+    /// Serves the access page.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response cannot be written.
+    pub async fn serve_access_page(&self, session: &mut Session, ctx: &RequestCtx) -> Result<bool> {
+        debug!(circuit_id = ?ctx.circuit_id, "Access page served");
+
+        let session_data = ctx.session_data.clone().unwrap_or_default();
+        let cookie_val = self.cookie_crypto.encrypt(&session_data.to_bytes());
+        let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
+
+        let token = self
+            .captcha
+            .create_token(&session_data.session_id.to_uppercase());
+
+        let html = ui::get_access_page(&token, &self.config);
+        self.serve_html(session, 200, html, Some(&cookie_header))
+            .await
+    }
+
+    /// Verifies the access token submission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response cannot be written.
+    pub async fn handle_access_verify(
+        &self,
+        session: &mut Session,
+        ctx: &RequestCtx,
+        body: &[u8],
+        now: u64,
+    ) -> Result<bool> {
+        let (token, _) = parse_captcha_submission(body);
+        let session_id = ctx
+            .session_data
+            .as_ref()
+            .map_or("unknown", |s| &s.session_id);
+
+        if self.captcha.verify(&token, session_id) {
+            info!(
+                circuit_id = ?ctx.circuit_id,
+                session_id = ?session_id,
+                "Access verified via click-to-enter"
+            );
+            let new_session = EncryptedSession {
+                session_id: generate_session_id(),
+                circuit_id: ctx.circuit_id.clone(),
+                created_at: now,
+                queue_started_at: 0,
+                queue_completed: true,
+                captcha_failures: 0,
+                captcha_gen_count: 0,
+                verified: true,
+                verified_at: now,
+            };
+            let cookie_val = self.cookie_crypto.encrypt(&new_session.to_bytes());
+            let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 3600);
+
+            let mut header = ResponseHeader::build(303, None)?;
+            header.insert_header("Location", "/")?;
+            header.insert_header("Set-Cookie", cookie_header)?;
+            header.insert_header("Clear-Site-Data", "\"cache\"")?;
+            session
+                .write_response_header(Box::new(header), true)
+                .await?;
+        } else {
+            warn!(
+                circuit_id = ?ctx.circuit_id,
+                session_id = ?session_id,
+                "Access verification failed (invalid token)"
+            );
+            let uri = session.req_header().uri.to_string();
+            let mut header = ResponseHeader::build(303, None)?;
+            header.insert_header("Location", uri)?;
+            header.insert_header("Clear-Site-Data", "\"cache\"")?;
+            session
+                .write_response_header(Box::new(header), true)
+                .await?;
+        }
+        Ok(true)
+    }
+
     /// Verifies the CAPTCHA submission.
     ///
     /// # Errors
