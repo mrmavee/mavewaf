@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
 /// Context for a single request.
+#[derive(Default)]
 pub struct RequestCtx {
     pub circuit_id: Option<String>,
     pub session_data: Option<EncryptedSession>,
@@ -442,7 +443,9 @@ impl ProxyHttp for MaveProxy {
         if let Some(b) = body {
             if ctx.body_buffer.is_empty() && !b.is_empty() {
                 let peek_len = b.len().min(512);
-                if let Some(mime) = crate::utils::signatures::detect_safe_mime(&b[..peek_len]) {
+                if let Some(mime) =
+                    crate::security::waf::signatures::detect_safe_mime(&b[..peek_len])
+                {
                     debug!(mime = %mime, "Skipping WAF scan for safe binary");
                     ctx.skip_body_scan = true;
                     return Ok(());
