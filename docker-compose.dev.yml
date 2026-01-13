@@ -21,7 +21,9 @@ services:
       - LISTEN_ADDR=0.0.0.0:8080
       - INTERNAL_ADDR=127.0.0.1:8081
       - BACKEND_URL=http://backend:9000
+      - LOGO_PATH=/etc/mavewaf/logo.png
     volumes:
+      - ./logo.png:/etc/mavewaf/logo.png:ro
       - ./tor_keys/mave:/var/lib/tor/hidden_service/
       - ./torrc:/etc/tor/torrc:ro
       - ./i2p_keys:/var/lib/i2pd/

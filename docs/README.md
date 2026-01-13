@@ -93,10 +93,26 @@ openssl rand -base64 24
 | Variable | Description | Default |
 |:---|:---|:---|
 | `APP_NAME` | Website name in footer | `MaveWAF` |
-| `LOGO_BASE64` | Base64-encoded favicon | - |
+| `LOGO_PATH` | Path to a custom logo file (PNG/JPG/WEBP). If provided, it will be loaded, resized/optimized if needed, and used as the favicon. If valid file is not found, default hardcoded logo will be used. (Max size: 10MB) | - |
 | `META_TITLE` | HTML title for WAF pages | `Security Check` |
 | `META_DESCRIPTION` | Meta description | - |
 | `META_KEYWORDS` | Meta keywords | - |
+
+#### Custom Logo
+
+To use a custom logo via `LOGO_PATH` in Docker, mount the file and set the environment variable:
+
+```yaml
+services:
+  mavewaf:
+    # ...
+    environment:
+      - LOGO_PATH=/etc/mavewaf/your-logo.png
+    volumes:
+      - ./my-logo.png:/etc/mavewaf/your-logo.png:ro
+```
+
+If `LOGO_PATH` is omitted or invalid, MaveWAF falls back to the built-in secure default logo.
 
 ---
 
@@ -156,4 +172,6 @@ COEP_ENABLED=true
 _Note: Even if `CSP_EXTRA_SOURCES` is enabled, Tor Browser's "Safest" mode may still block external resources (like fonts or scripts) regardless of your CSP settings._
 
 > For more information on HTTP headers, please refer to the [MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers).
+
+---
 

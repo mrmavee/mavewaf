@@ -152,7 +152,6 @@ pub struct Config {
     pub defense_circuit_flood_threshold: u32,
     /// Seconds after which defense mode auto-deactivates if traffic normalizes.
     pub defense_cooldown_secs: u64,
-
     /// Webhook URL for security notifications.
     pub webhook_url: Option<String>,
     /// Maximum captcha failures before redirect to queue.
@@ -161,7 +160,6 @@ pub struct Config {
     pub captcha_gen_limit: u8,
     /// List of allowed hosts for SSRF protection.
     pub ssrf_allowed_hosts: Vec<String>,
-
     /// Maximum body size to scan in bytes (default 32KB).
     pub waf_body_scan_max_size: usize,
     /// Requests per second limit per session.
@@ -245,9 +243,7 @@ impl Config {
         let rate_limit_session_rps = get_env_u32_or("RATE_LIMIT_SESSION_RPS", 3);
         let rate_limit_session_burst = get_env_u32_or("RATE_LIMIT_SESSION_BURST", 5);
         let app_name = get_env_or("APP_NAME", "");
-        let favicon_base64 = env::var("LOGO_BASE64").unwrap_or_else(|_| {
-            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAABmJLR0QA/wD/AP+gvaeTAAAFBElEQVR4nO1aO2xcRRQ9d2bXBoIlikWJZKFQUaAoLlxAAcLaROaTNRKfLSLLEcgdNe7dRZS4QojOyMJV5MIr2tR0UGwTCVAoFu9GiAJkK7tzKfa99fvMfbtzs34ueKdJNKuZe+fM3HNm5hmoUKFChQoVKlSoUKFChRmwtsu1y85BwtpaeG4mtMPjPwYrr20Pvgjtd9HYunOyff3KYCW0XzABdQCGee/G5/1WaN+LwubGk3UA32j6BhMAAMSwzDi4ce/Pm5r+88Tm+09eN250SAxVaYYT8HTciYAlItNZuTdY1gSeBz774OSaMa5DjJcM68bQ7gAQAwZYJvDRza3eFV14Pdrtx88PDR4Q83UCQADqT8PHUWlAHJAYIGC1DvtDu802PLwOu7tsFv5d/N44vEkATLQgGgQTMCT3CnEU9Dx46/fFwX1dCuF49NPgK8P4eLIIUS5D5quhYwUTQGRfjANO/h3/f+eNzYu3x607J9vE/KXBpAzPc6nhhdDxVBqQCp5YAcO899bmxdljbHeTuEjpETQ1GEyAFDxqs3A4ePvu/O0xaXeULr9JLnYUPm74DhglgiNdClFCS4ZNp9menz1m7S5bfnGbBsEEWKRZT4khJu3LbPlofQ726LO75K5LEqKBagekygB+Qshh1Z0+mz1KducR4PI0ILkDTFYDOLNCQOtvp7dHye4yFlyuBlikBTClAcgTYgg7730abo+Fdgc/IRqoj8JxQsaTUI4Q5r2Nj2a3x2l2JxGigY4A5CecE8P0ClkABx9+Mt0eZ7E7LyFc4jkgV/soEMPz35esM512S7bHWe1OEkOUogFO9H8vIckVAmPZWT7aWs/bY4jdSYRooNcAwY6mEULA6ulzaXsMtTuf3pQugoUrlBXDbBujVTs7t8dQu8uJYdSm0YDgZ6QFFK9GkTtMJgQADjt3Nwa/1Zw7Q6DdSWKokADFO9rIs+WFhOPEFkbcGxqyBLycmpDjr+Hv3x8Z/GNHeNVHiHD8VtWB2gbFFc7WPgN1R39ZS+8Qo5fWDq557K5vrLs1JPQlu5MIKec2KASfJoaHDxpdOGoaoDduY1//vrHu1reda78AntpPjO8rv9LuAtPsLqfOkUUdHje6hqlJ4J6nf9+YzOQxRQwTuahWUkMAksEL7E46oe0fN7oE0yRE5RCtPMC348nHiUl2JzlOeQQIyfnsyqdL+8eNriPTJEaPgD6Bb3/349WffTGk5zefGJb6JDar3Unbc/+40TXgd32TBwB4xC5HSOZ3zaeh4D7SdbjIv8n5x/JOPI5TYHc+Qko9CUp2J58MwwvUN+FCMSzLBbwHoUIxZGi+2xXVviSGGqifxGbxf4q8XrU9XWZMyITE5VfOk9gou8ISIZw++ysSm+m1KfF7Ke8BgKcGs6vBnPs9FEV2lyMkilv6l6Gs3Ul2pUFKVzCFEJSoAfAklCaEc4RogqR0RRDYLCEa6EUwEzwleh53CEWR3UliWI4NQrY70R2Eg1ARZjn7X8plyPdlKGl3WXd4ltqU7O5yL0MZf07ZnbBCVrMDINudRIgG4XeB0TiqZHcpd0i0haLI7kQLLuOPpLLJzfKYqToHuOLLkO/4rYH+IOSxuyJCdDEyK+wT2AQhGgSXwKKpP3LurEtu3DleKRufxiIiLAPGjdsWHD8MjeOIH55aGscYAYYSV2QCOIrBNM6BABiiX0PjVKhQoUKF/zP+A5KXL3I9XEqCAAAAAElFTkSuQmCC".to_string()
-        });
+        let favicon_base64 = Self::load_logo();
 
         Arc::new(Self {
             listen_addr,
@@ -291,11 +287,56 @@ impl Config {
             coop_policy: get_env_or("COOP_POLICY", "same-origin-allow-popups"),
         })
     }
+
+    fn load_logo() -> String {
+        use base64::prelude::*;
+        env::var("LOGO_PATH").map_or_else(
+            |_| {
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAABmJLR0QA/wD/AP+gvaeTAAAFBElEQVR4nO1aO2xcRRQ9d2bXBoIlikWJZKFQUaAoLlxAAcLaROaTNRKfLSLLEcgdNe7dRZS4QojOyMJV5MIr2tR0UGwTCVAoFu9GiAJkK7tzKfa99fvMfbtzs34ueKdJNKuZe+fM3HNm5hmoUKFChQoVKlSoUKFChRmwtsu1y85BwtpaeG4mtMPjPwYrr20Pvgjtd9HYunOyff3KYCW0XzABdQCGee/G5/1WaN+LwubGk3UA32j6BhMAAMSwzDi4ce/Pm5r+88Tm+09eN250SAxVaYYT8HTciYAlItNZuTdY1gSeBz774OSaMa5DjJcM68bQ7gAQAwZYJvDRza3eFV14Pdrtx88PDR4Q83UCQADqT8PHUWlAHJAYIGC1DvtDu802PLwOu7tsFv5d/N44vEkATLQgGgQTMCT3CnEU9Dx46/fFwX1dCuF49NPgK8P4eLIIUS5D5quhYwUTQGRfjANO/h3/f+eNzYu3x607J9vE/KXBpAzPc6nhhdDxVBqQCp5YAcO899bmxdljbHeTuEjpETQ1GEyAFDxqs3A4ePvu/O0xaXeULr9JLnYUPm74DhglgiNdClFCS4ZNp9menz1m7S5bfnGbBsEEWKRZT4khJu3LbPlofQ726LO75K5LEqKBagekygB+Qshh1Z0+mz1KducR4PI0ILkDTFYDOLNCQOtvp7dHye4yFlyuBlikBTClAcgTYgg7730abo+Fdgc/IRqoj8JxQsaTUI4Q5r2Nj2a3x2l2JxGigY4A5CecE8P0ClkABx9+Mt0eZ7E7LyFc4jkgV/soEMPz35esM512S7bHWe1OEkOUogFO9H8vIckVAmPZWT7aWs/bY4jdSYRooNcAwY6mEULA6ulzaXsMtTuf3pQugoUrlBXDbBujVTs7t8dQu8uJYdSm0YDgZ6QFFK9GkTtMJgQADjt3Nwa/1Zw7Q6DdSWKokADFO9rIs+WFhOPEFkbcGxqyBLycmpDjr+Hv3x8Z/GNHeNVHiHD8VtWB2gbFFc7WPgN1R39ZS+8Qo5fWDq557K5vrLs1JPQlu5MIKec2KASfJoaHDxpdOGoaoDduY1//vrHu1reda78AntpPjO8rv9LuAtPsLqfOkUUdHje6hqlJ4J6nf9+YzOQxRQwTuahWUkMAksEL7E46oe0fN7oE0yRE5RCtPMC348nHiUl2JzlOeQQIyfnsyqdL+8eNriPTJEaPgD6Bb3/349WffTGk5zefGJb6JDar3Unbc/+40TXgd32TBwB4xC5HSOZ3zaeh4D7SdbjIv8n5x/JOPI5TYHc+Qko9CUp2J58MwwvUN+FCMSzLBbwHoUIxZGi+2xXVviSGGqifxGbxf4q8XrU9XWZMyITE5VfOk9gou8ISIZw++ysSm+m1KfF7Ke8BgKcGs6vBnPs9FEV2lyMkilv6l6Gs3Ul2pUFKVzCFEJSoAfAklCaEc4RogqS0RRDYLCEa6EUwEzwleh53CEWR3UliWI4NQrY70R2Eg1ARZjn7X8plyPdlKGl3WXd4ltqU7O5yL0MZf07ZnbBCVrMDINudRIgG4XeB0TiqZHcpd0i0haLI7kQLLuOPpLLJzfKYqToHuOLLkO/4rYH+IOSxuyJCdDEyK+wT2AQhGgSXwKKpP3LurEtu3DleKRufxiIiLAPGjdsWHD8MjeOIH55aGscYAYYSV2QCOIrBNM6BABiiX0PjVKhQoUKF/zP+A5KXL3I9XEqCAAAAAElFTkSuQmCC".to_string()
+            },
+            |path| {
+                let data = std::fs::read(&path)
+                    .unwrap_or_else(|e| panic!("Failed to read LOGO_PATH '{path}': {e}"));
+
+                assert!(
+                    data.len() <= 10 * 1024 * 1024,
+                    "LOGO_PATH file '{path}' exceeds 10MB limit"
+                );
+
+                let img = image::load_from_memory(&data).unwrap_or_else(|e| {
+                    panic!("Failed to decode image at LOGO_PATH '{path}': {e}")
+                });
+
+                let final_data = if data.len() <= 100 * 1024
+                    && img.width() <= 128
+                    && img.height() <= 128
+                {
+                    let mut buf = std::io::Cursor::new(Vec::new());
+                    img.write_to(&mut buf, image::ImageFormat::Png)
+                        .expect("Failed to encode optimized logo");
+                    buf.into_inner()
+                } else {
+                    let scaled = img.resize(128, 128, image::imageops::FilterType::Lanczos3);
+                    let mut buf = std::io::Cursor::new(Vec::new());
+                    scaled
+                        .write_to(&mut buf, image::ImageFormat::Png)
+                        .expect("Failed to encode optimized logo");
+                    buf.into_inner()
+                };
+
+                let b64 = BASE64_STANDARD.encode(&final_data);
+                format!("data:image/png;base64,{b64}")
+            },
+        )
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_waf_mode_parsing() {
@@ -315,6 +356,7 @@ mod tests {
 
     #[test]
     fn test_helpers_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             env::remove_var("TEST_MISSING_VAR");
         }
@@ -328,6 +370,7 @@ mod tests {
 
     #[test]
     fn test_helpers_parsing() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             env::set_var("TEST_P1", "123");
             assert_eq!(get_env_u32("TEST_P1"), 123);
@@ -346,6 +389,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "TEST_REQ must be set")]
     fn test_get_env_panic() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             env::remove_var("TEST_REQ");
         }
@@ -354,6 +398,7 @@ mod tests {
 
     #[test]
     fn test_config_from_env_defaults() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             env::remove_var("WAF_MODE");
             env::set_var("LISTEN_ADDR", "127.0.0.1:9090");
@@ -373,5 +418,51 @@ mod tests {
         assert_eq!(config.listen_addr.port(), 9090);
         assert_eq!(config.waf_mode, WafMode::Normal);
         assert_eq!(config.defense_cooldown_secs, 300);
+    }
+
+    #[test]
+    fn test_config_with_logo_path() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        use std::io::Write;
+
+        let png_bytes: [u8; 70] = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0xda, 0x63, 0xfc, 0xcf, 0xc0, 0x50, 0x0f, 0x00, 0x04, 0x85, 0x01, 0x80, 0x84, 0xa9,
+            0x8c, 0x21, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+
+        let temp_dir = std::env::temp_dir();
+        let logo_path = temp_dir.join("mavewaf_test_logo.png");
+        {
+            let mut f = std::fs::File::create(&logo_path).unwrap();
+            f.write_all(&png_bytes).unwrap();
+        }
+
+        unsafe {
+            env::set_var("LOGO_PATH", logo_path.to_str().unwrap());
+            env::remove_var("WAF_MODE");
+            env::set_var("LISTEN_ADDR", "127.0.0.1:9095");
+            env::set_var("INTERNAL_ADDR", "127.0.0.1:9096");
+            env::set_var("BACKEND_URL", "http://localhost");
+            env::set_var("CAPTCHA_SECRET", "test");
+            env::set_var("SESSION_SECRET", "test");
+            env::set_var("TOR_CIRCUIT_PREFIX", "test");
+            env::set_var("RATE_LIMIT_RPS", "10");
+            env::set_var("RATE_LIMIT_BURST", "10");
+            env::set_var("DEFENSE_ERROR_RATE_THRESHOLD", "0.5");
+            env::set_var("DEFENSE_CIRCUIT_FLOOD_THRESHOLD", "5");
+            env::set_var("CAPTCHA_TTL", "100");
+        }
+
+        let config = Config::from_env();
+
+        unsafe {
+            env::remove_var("LOGO_PATH");
+        }
+        let _ = std::fs::remove_file(logo_path);
+
+        assert!(config.favicon_base64.starts_with("data:image/png;base64,"));
     }
 }
