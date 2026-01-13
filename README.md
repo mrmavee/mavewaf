@@ -172,6 +172,7 @@ All security events include: `circuit_id`, `http_method`, `http_path`, `action`,
 ## Limitations
 
 - **Onion Balancer**: Currently not supported. This is planned for future development to allow scaling across multiple backend instances.
+- **File Uploads**: Fully supported via `Content-Length`. Large files are buffered in memory for security inspection.
 
 ## License
 
