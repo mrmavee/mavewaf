@@ -8,7 +8,7 @@
 
 use mavewaf::{
     CaptchaManager, Config, DefenseMonitor, MaveProxy, ProxyProtocolConfig, RateLimiter,
-    TorControl, WafEngine, WebhookNotifier, run_proxy_listener,
+    TorControl, WafEngine, WebhookNotifier, preload_templates, run_proxy_listener,
 };
 
 use pingora::proxy::http_proxy_service;
@@ -34,6 +34,7 @@ fn main() {
     }
 
     let config = Config::from_env();
+    preload_templates();
     info!(
         listen_addr = %config.listen_addr,
         internal_addr = %config.internal_addr,

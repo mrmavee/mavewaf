@@ -20,3 +20,4 @@ pub use security::captcha::CaptchaManager;
 pub use security::crypto::CookieCrypto;
 pub use security::defense::DefenseMonitor;
 pub use security::waf::WafEngine;
+pub use web::ui::preload_templates;

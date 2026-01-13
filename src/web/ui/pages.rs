@@ -11,40 +11,54 @@ use crate::config::{CaptchaStyle, Config};
 use crate::security::captcha::CharPosition;
 use std::collections::HashMap;
 use std::fmt::Write;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 const TEMPLATE_DIR: &str = "templates";
-static TEMPLATES: OnceLock<HashMap<String, String>> = OnceLock::new();
+static TEMPLATES: OnceLock<HashMap<String, Arc<str>>> = OnceLock::new();
 
-/// Loads a template from the filesystem or cache.
-fn load_template(filename: &str) -> Option<String> {
-    let templates = TEMPLATES.get_or_init(|| {
+/// Pre-loads all templates into memory.
+pub fn preload_templates() {
+    let _ = get_template_map();
+}
+
+fn get_template_map() -> &'static HashMap<String, Arc<str>> {
+    TEMPLATES.get_or_init(|| {
         let mut m = HashMap::new();
         for name in &["queue.html", "captcha.html", "error.html", "access.html"] {
             let path = Path::new(TEMPLATE_DIR).join(name);
             match fs::read_to_string(&path) {
                 Ok(content) => {
-                    m.insert(name.to_string(), content);
+                    m.insert(name.to_string(), Arc::from(content));
                 }
                 Err(e) => {
-                    error!(file = name, error = %e, "CRITICAL: Failed to load UI template during init");
+                    error!(file = name, error = %e, "CRITICAL: Failed to load UI template");
                 }
             }
         }
         m
-    });
+    })
+}
 
-    templates.get(filename).cloned()
+fn load_template(filename: &str) -> Option<Arc<str>> {
+    get_template_map().get(filename).cloned()
 }
 
 /// Renders the queue waiting page.
 #[must_use]
-pub fn get_queue_page(wait_time_secs: u64, request_id: &str, config: &Config) -> String {
+pub fn get_queue_page(
+    wait_time_secs: u64,
+    request_id: &str,
+    target_url: &str,
+    config: &Config,
+) -> String {
     let template = load_template("queue.html")
-        .unwrap_or_else(|| format!("<html><head><meta http-equiv='refresh' content='{wait_time_secs}'></head><body><h1>Queue: {wait_time_secs}s</h1></body></html>"));
+        .map_or_else(|| {
+            format!("<html><head><meta http-equiv='refresh' content='{wait_time_secs}'></head><body><h1>Queue: {wait_time_secs}s</h1></body></html>")
+        }, |t: Arc<str>| t.to_string());
 
     template
         .replace("{{WAIT_TIME}}", &wait_time_secs.to_string())
+        .replace("{{TARGET_URL}}", target_url)
         .replace("{{REQUEST_ID}}", request_id)
         .replace("{{CIRCUIT_ID}}", request_id)
         .replace("{{APP_NAME}}", &config.app_name)
@@ -71,7 +85,20 @@ fn date_from_days(mut days: u64) -> (u64, u8, u8) {
         let year_days = if is_leap { 366 } else { 365 };
         if days < year_days {
             let mut month = 1;
-            let days_in_month = [31, if is_leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            let days_in_month = [
+                31,
+                if is_leap { 29 } else { 28 },
+                31,
+                30,
+                31,
+                30,
+                31,
+                31,
+                30,
+                31,
+                30,
+                31,
+            ];
             for &dim in &days_in_month {
                 if days < dim {
                     return (year, month, u8::try_from(days + 1).unwrap_or(1));
@@ -96,8 +123,10 @@ pub fn get_captcha_page(
     style: CaptchaStyle,
     config: &Config,
 ) -> String {
-    let template = load_template("captcha.html")
-        .unwrap_or_else(|| "<html><body><h1>Security Check Error</h1></body></html>".to_string());
+    let template = load_template("captcha.html").map_or_else(
+        || "<html><body><h1>Security Check Error</h1></body></html>".to_string(),
+        |t: Arc<str>| t.to_string(),
+    );
 
     let timestamp_val = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -117,7 +146,7 @@ pub fn get_captcha_page(
         ""
     };
 
-    let (zoom_css, inputs_html) = match style {
+    let (captcha_css, inputs_html) = match style {
         CaptchaStyle::Simple => {
             let css =
                 "<style>.input-row { padding-top: 0 !important; flex-direction: column !important; gap: 20px !important; } .image { position: static !important; width: 100% !important; max-width: 400px !important; aspect-ratio: 400/150 !important; height: auto !important; margin: 0 auto !important; transform: none !important; order: -1 !important; border-radius: 8px !important; border: 2px solid #3b82f6 !important; background-size: contain !important; background-repeat: no-repeat !important; }</style>"
@@ -168,7 +197,7 @@ pub fn get_captcha_page(
         .replace("{{TTL_DISPLAY}}", &ttl_display)
         .replace("{{ERROR_MESSAGE}}", error_html)
         .replace("{{CAPTCHA_INPUTS}}", &inputs_html)
-        .replace("{{ZOOM_CSS}}", &zoom_css)
+        .replace("{{CAPTCHA_CSS}}", &captcha_css)
         .replace("{{APP_NAME}}", &config.app_name)
         .replace("{{FAVICON}}", &config.favicon_base64)
         .replace("{{META_TITLE}}", &config.meta_title)
@@ -190,11 +219,11 @@ pub fn get_error_page(
         .as_secs();
     let timestamp = format_timestamp(timestamp_val);
 
-    let template = load_template("error.html").unwrap_or_else(|| {
+    let template = load_template("error.html").map_or_else(|| {
         format!(
             "<html><head><title>{title}</title></head><body><h1>{title}</h1><p>{description}</p></body></html>"
         )
-    });
+    }, |t: Arc<str>| t.to_string());
 
     let mut details_html = String::new();
     if let Some(dets) = details {
@@ -246,8 +275,10 @@ pub fn get_block_page(reason: &str, request_id: &str, config: &Config) -> String
 /// Renders the access page.
 #[must_use]
 pub fn get_access_page(s: &str, config: &Config) -> String {
-    let template = load_template("access.html")
-        .unwrap_or_else(|| "<html><body><h1>Security Check</h1></body></html>".to_string());
+    let template = load_template("access.html").map_or_else(
+        || "<html><body><h1>Security Check</h1></body></html>".to_string(),
+        |t: Arc<str>| t.to_string(),
+    );
 
     template
         .replace("{{STATE_TOKEN}}", s)
@@ -312,7 +343,7 @@ mod tests {
     #[test]
     fn test_render_queue_page() {
         let config = create_dummy_config();
-        let html = get_queue_page(10, "req-123", &config);
+        let html = get_queue_page(10, "req-123", "/target", &config);
         assert!(html.contains("Queue: 10s") || html.contains("10"));
     }
 

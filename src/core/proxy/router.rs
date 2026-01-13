@@ -24,7 +24,7 @@ pub struct WafRouter {
     pub cookie_crypto: crate::security::crypto::CookieCrypto,
     pub tor_control: Option<TorControl>,
     pub defense_monitor: Arc<DefenseMonitor>,
-    handler: ChallengeHandler,
+    pub handler: ChallengeHandler,
 }
 
 impl WafRouter {
@@ -122,7 +122,7 @@ impl WafRouter {
 
             let queue_ok = session_state.as_ref().is_some_and(|s| s.queue_completed);
             if !queue_ok {
-                return self.handler.serve_queue_page(session, ctx, now).await;
+                return self.handler.serve_queue_page(session, ctx, "/", now).await;
             }
 
             return self
@@ -157,14 +157,11 @@ impl WafRouter {
                     .serve_captcha_page_with_cookie(session, ctx, false, &cookie_header)
                     .await;
             }
-            let remaining = 5 - waited;
-            return self
-                .handler
-                .serve_queue_page_with_time(session, ctx, remaining)
-                .await;
+
+            return self.handler.serve_queue_page(session, ctx, "/", now).await;
         }
 
-        self.handler.serve_queue_page(session, ctx, now).await
+        self.handler.serve_queue_page(session, ctx, "/", now).await
     }
 }
 

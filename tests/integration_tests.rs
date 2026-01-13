@@ -618,7 +618,7 @@ async fn test_captcha_gen_limit_exceeded() {
         queue_completed: true,
         captcha_gen_count: 5,
         created_at: now,
-        queue_started_at: now,
+        queue_started_at: now - 10,
         ..Default::default()
     };
     let cookie_val = crypto.encrypt(&session.to_bytes());
@@ -679,7 +679,7 @@ async fn test_kill_circuit_integration() {
         queue_completed: true,
         captcha_gen_count: 2,
         created_at: now,
-        queue_started_at: now,
+        queue_started_at: now - 10,
         ..Default::default()
     };
     let cookie_val = crypto.encrypt(&session.to_bytes());
@@ -867,7 +867,7 @@ async fn test_kill_circuit_failure() {
         queue_completed: true,
         captcha_gen_count: 2,
         created_at: now,
-        queue_started_at: now,
+        queue_started_at: now - 10,
         ..Default::default()
     };
     let cookie_val = crypto.encrypt(&session.to_bytes());
@@ -1060,4 +1060,72 @@ async fn test_defense_mode_access_page() {
 
     assert_eq!(resp_verified.status(), 200);
     assert_eq!(resp_verified.text().await.unwrap(), "Hello");
+}
+
+#[tokio::test]
+async fn test_queue_bypass_protection() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config).await;
+    let crypto =
+        CookieCrypto::new("0000000000000000000000000000000000000000000000000000000000000000");
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let session_early = EncryptedSession {
+        session_id: "test_bypass_early".to_string(),
+        queue_started_at: now,
+        created_at: now,
+        ..Default::default()
+    };
+    let cookie_early = format!(
+        "{SESSION_COOKIE_NAME}={}",
+        crypto.encrypt(&session_early.to_bytes())
+    );
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let resp_early = client
+        .get(format!("http://127.0.0.1:{proxy_port}/captcha"))
+        .header("Cookie", &cookie_early)
+        .header("X-Circuit-Id", "id_bypass_early")
+        .send()
+        .await
+        .unwrap();
+
+    let text_early = resp_early.text().await.unwrap();
+    if !text_early.contains("Please Wait") {
+        panic!("Expected Queue page, got: {}", text_early);
+    }
+
+    let session_valid = EncryptedSession {
+        session_id: "test_bypass_valid".to_string(),
+        queue_started_at: now - 10,
+        created_at: now,
+        ..Default::default()
+    };
+    let cookie_valid = format!(
+        "{SESSION_COOKIE_NAME}={}",
+        crypto.encrypt(&session_valid.to_bytes())
+    );
+
+    let resp_valid = client
+        .get(format!("http://127.0.0.1:{proxy_port}/captcha"))
+        .header("Cookie", &cookie_valid)
+        .header("X-Circuit-Id", "id_bypass_valid")
+        .send()
+        .await
+        .unwrap();
+
+    let text_valid = resp_valid.text().await.unwrap();
+    assert!(text_valid.contains("Security Check") || text_valid.contains("CAPTCHA"));
 }

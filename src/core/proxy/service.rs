@@ -399,16 +399,16 @@ impl ProxyHttp for MaveProxy {
                     message: format!("Circuit rate limit exceeded for {key}"),
                 });
 
-                let wait_time = 5;
-                let request_id = ctx
-                    .session_data
-                    .as_ref()
-                    .map_or_else(generate_session_id, |s| s.session_id.clone());
-
-                let html = ui::get_queue_page(wait_time, &request_id, &self.config);
+                let uri = session.req_header().uri.to_string();
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
 
                 return self
-                    .serve_html(session, 429, html, ctx.set_session_cookie.as_deref())
+                    .waf_router
+                    .handler
+                    .serve_queue_page(session, ctx, &uri, now)
                     .await;
             }
 
@@ -418,10 +418,16 @@ impl ProxyHttp for MaveProxy {
                     .check_and_record(&enc_session.session_id)
             {
                 warn!(session_id = %enc_session.session_id, action = "RATE_LIMIT", "Session rate limit exceeded");
-                let wait_time = 10;
-                let html = ui::get_queue_page(wait_time, &enc_session.session_id, &self.config);
+                let uri = session.req_header().uri.to_string();
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+
                 return self
-                    .serve_html(session, 429, html, ctx.set_session_cookie.as_deref())
+                    .waf_router
+                    .handler
+                    .serve_queue_page(session, ctx, &uri, now)
                     .await;
             }
         }

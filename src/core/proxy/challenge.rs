@@ -92,6 +92,7 @@ impl ChallengeHandler {
         &self,
         session: &mut Session,
         ctx: &RequestCtx,
+        target_url: &str,
         now: u64,
     ) -> Result<bool> {
         debug!(circuit_id = ?ctx.circuit_id, "Queue page served");
@@ -109,7 +110,7 @@ impl ChallengeHandler {
         let cookie_val = self.cookie_crypto.encrypt(&new_session.to_bytes());
         let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
         let request_id = &new_session.session_id;
-        let html = ui::get_queue_page(5, request_id, &self.config);
+        let html = ui::get_queue_page(5, request_id, target_url, &self.config);
         self.serve_html(session, 200, html, Some(&cookie_header))
             .await
     }
@@ -123,6 +124,7 @@ impl ChallengeHandler {
         &self,
         session: &mut Session,
         ctx: &RequestCtx,
+        target_url: &str,
         remaining: u64,
     ) -> Result<bool> {
         debug!(circuit_id = ?ctx.circuit_id, remaining_seconds = remaining, "Queue in progress");
@@ -130,7 +132,7 @@ impl ChallengeHandler {
             .session_data
             .as_ref()
             .map_or("unknown", |s| s.session_id.as_str());
-        let html = ui::get_queue_page(remaining, session_id, &self.config);
+        let html = ui::get_queue_page(remaining, session_id, target_url, &self.config);
         self.serve_html(session, 200, html, None).await
     }
 
@@ -148,6 +150,27 @@ impl ChallengeHandler {
         debug!(circuit_id = ?ctx.circuit_id, "CAPTCHA page served");
 
         let mut session_data = ctx.session_data.clone().unwrap_or_default();
+        if session_data.queue_started_at > 0 {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            let required_wait = 5;
+
+            if now < session_data.queue_started_at + required_wait {
+                let remaining = (session_data.queue_started_at + required_wait).saturating_sub(now);
+                warn!(
+                    circuit_id = ?ctx.circuit_id,
+                    remaining = remaining,
+                    "Queue bypass attempt blocked"
+                );
+                return self
+                    .serve_queue_page_with_time(session, ctx, "/", remaining.max(1))
+                    .await;
+            }
+        }
+
         session_data.captcha_gen_count += 1;
 
         if session_data.captcha_gen_count > self.config.captcha_gen_limit {
