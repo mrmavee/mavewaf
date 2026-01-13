@@ -14,6 +14,7 @@ jobs:
   build-binary:
     name: Build Signed Binary
     runs-on: ubuntu-latest
+    needs: test
     permissions:
       contents: write
     outputs:
@@ -25,18 +26,20 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential clang pkg-config libssl-dev musl-tools gnupg
+          sudo apt-get install -y cmake build-essential clang pkg-config libssl-dev musl-tools musl-dev gnupg
 
       - name: Setup Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component clippy,rustfmt
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+          . "$HOME/.cargo/env"
           rustup target add x86_64-unknown-linux-musl
-
-      - name: Run Tests
-        run: cargo test --verbose
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Build Release Binary
+        env:
+          CC: musl-gcc
+          CXX: g++
+          CC_x86_64_unknown_linux_musl: musl-gcc
         run: |
           cargo build --release --target x86_64-unknown-linux-musl
           strip target/x86_64-unknown-linux-musl/release/mavewaf
@@ -58,7 +61,7 @@ jobs:
             --detach-sign --armor mavewaf-${{ github.ref_name }}-linux-amd64
 
       - name: Upload Binary Artifacts
-        uses: https://code.forgejo.org/actions/upload-artifact@v7
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
         with:
           name: release-binaries
           path: |
@@ -81,7 +84,7 @@ jobs:
 
       - name: Setup Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component clippy,rustfmt
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Run Tests
@@ -90,7 +93,7 @@ jobs:
   docker:
     name: Build Docker
     runs-on: ubuntu-latest
-    needs: [test, build-binary]
+    needs: build-binary
     permissions:
       contents: write
       packages: write
@@ -101,7 +104,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download Binary Artifacts
-        uses: https://code.forgejo.org/actions/download-artifact@v7
+        uses: https://code.forgejo.org/actions/download-artifact@v3
         with:
           name: release-binaries
           path: ./release-binaries
@@ -111,7 +114,6 @@ jobs:
           curl -sL https://github.com/orhun/git-cliff/releases/download/v2.11.0/git-cliff-2.11.0-x86_64-unknown-linux-gnu.tar.gz -o git-cliff.tar.gz
           tar -xzf git-cliff.tar.gz
           sudo mv git-cliff-*/git-cliff /usr/local/bin/
-          git-cliff --version
 
       - name: Generate Release Notes
         run: |
