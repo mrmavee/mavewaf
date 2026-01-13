@@ -19,6 +19,23 @@ services:
       - ./tunnels.conf:/etc/i2pd/tunnels.conf:ro
     networks:
       - mave-net
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '2.0'
 
 networks:
   mave-net:

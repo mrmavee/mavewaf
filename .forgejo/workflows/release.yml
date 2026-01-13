@@ -11,6 +11,62 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  build-binary:
+    name: Build Signed Binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      binary_sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - name: Checkout
+        uses: https://code.forgejo.org/actions/checkout@v6
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang pkg-config libssl-dev musl-tools gnupg
+
+      - name: Setup Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component clippy,rustfmt
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Run Tests
+        run: cargo test --verbose
+
+      - name: Build Release Binary
+        run: |
+          cargo build --release --target x86_64-unknown-linux-musl
+          strip target/x86_64-unknown-linux-musl/release/mavewaf
+          mv target/x86_64-unknown-linux-musl/release/mavewaf mavewaf-${{ github.ref_name }}-linux-amd64
+
+      - name: Generate SHA256
+        id: hash
+        run: |
+          sha256sum mavewaf-${{ github.ref_name }}-linux-amd64 > mavewaf-${{ github.ref_name }}-linux-amd64.sha256
+          echo "sha256=$(cat mavewaf-${{ github.ref_name }}-linux-amd64.sha256)" >> $GITHUB_OUTPUT
+
+      - name: Import GPG Key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "$GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 \
+            --detach-sign --armor mavewaf-${{ github.ref_name }}-linux-amd64
+
+      - name: Upload Binary Artifacts
+        uses: https://code.forgejo.org/actions/upload-artifact@v7
+        with:
+          name: release-binaries
+          path: |
+            mavewaf-${{ github.ref_name }}-linux-amd64
+            mavewaf-${{ github.ref_name }}-linux-amd64.sha256
+            mavewaf-${{ github.ref_name }}-linux-amd64.asc
+          retention-days: 1
+
   test:
     name: Verify Release
     runs-on: ubuntu-latest
@@ -34,7 +90,7 @@ jobs:
   docker:
     name: Build Docker
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, build-binary]
     permissions:
       contents: write
       packages: write
@@ -43,6 +99,12 @@ jobs:
         uses: https://code.forgejo.org/actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Download Binary Artifacts
+        uses: https://code.forgejo.org/actions/download-artifact@v7
+        with:
+          name: release-binaries
+          path: ./release-binaries
 
       - name: Install git-cliff
         run: |
@@ -57,14 +119,33 @@ jobs:
           echo "=== Release Notes ==="
           cat CHANGELOG.md
 
-      - name: Create Release
+      - name: Create Release with Binaries
         run: |
           BODY=$(cat CHANGELOG.md)
-          curl -sS -X POST \
+          RELEASE_RESPONSE=$(curl -sS -X POST \
             -H "Authorization: token ${{ secrets.PACKAGES_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg tag "${{ github.ref_name }}" --arg body "$BODY" '{tag_name: $tag, name: $tag, body: $body}')" \
-            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases" > /dev/null
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases")
+          RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
+          
+          curl -sS -X POST \
+            -H "Authorization: token ${{ secrets.PACKAGES_TOKEN }}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary @./release-binaries/mavewaf-${{ github.ref_name }}-linux-amd64 \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=mavewaf-${{ github.ref_name }}-linux-amd64"
+          
+          curl -sS -X POST \
+            -H "Authorization: token ${{ secrets.PACKAGES_TOKEN }}" \
+            -H "Content-Type: text/plain" \
+            --data-binary @./release-binaries/mavewaf-${{ github.ref_name }}-linux-amd64.sha256 \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=mavewaf-${{ github.ref_name }}-linux-amd64.sha256"
+          
+          curl -sS -X POST \
+            -H "Authorization: token ${{ secrets.PACKAGES_TOKEN }}" \
+            -H "Content-Type: text/plain" \
+            --data-binary @./release-binaries/mavewaf-${{ github.ref_name }}-linux-amd64.asc \
+            "${{ github.server_url }}/api/v1/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=mavewaf-${{ github.ref_name }}-linux-amd64.asc"
 
       - name: Setup Buildx
         uses: https://code.forgejo.org/docker/setup-buildx-action@v3

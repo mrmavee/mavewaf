@@ -169,6 +169,28 @@ LOG_FORMAT=json         # Structured output
 
 All security events include: `circuit_id`, `http_method`, `http_path`, `action`, `rule`.
 
+## Verifying Releases
+
+### Docker Image (Cosign)
+
+```bash
+cosign verify --key cosign.pub git.mrmave.work/maverick/mavewaf:latest
+cosign verify --key cosign.pub mrmave/mavewaf:latest
+```
+
+### Binary (GPG)
+
+```bash
+wget https://git.mrmave.work/maverick/mavewaf/releases/download/vX.X.X/mavewaf-vX.X.X-linux-amd64
+wget https://git.mrmave.work/maverick/mavewaf/releases/download/vX.X.X/mavewaf-vX.X.X-linux-amd64.sha256
+wget https://git.mrmave.work/maverick/mavewaf/releases/download/vX.X.X/mavewaf-vX.X.X-linux-amd64.asc
+wget https://git.mrmave.work/maverick/mavewaf/raw/branch/master/maverick.asc
+
+gpg --import maverick.asc
+sha256sum -c mavewaf-vX.X.X-linux-amd64.sha256
+gpg --verify mavewaf-vX.X.X-linux-amd64.asc mavewaf-vX.X.X-linux-amd64
+```
+
 ## Limitations
 
 - **Onion Balancer**: Currently not supported. This is planned for future development to allow scaling across multiple backend instances.
