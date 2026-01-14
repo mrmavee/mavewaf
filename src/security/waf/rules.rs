@@ -6,7 +6,7 @@ use aho_corasick::AhoCorasick;
 use percent_encoding::percent_decode_str;
 use regex::RegexSet;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::debug;
 
 const BLOCK_SCORE: u32 = 100;
@@ -46,6 +46,15 @@ pub struct EvalResult {
     pub matched_rules: Vec<u32>,
 }
 
+type CachedRules = (
+    Arc<Vec<Rule>>,
+    Arc<Vec<Rule>>,
+    Arc<AhoCorasick>,
+    Arc<RegexSet>,
+);
+
+static CACHED_RULES: OnceLock<CachedRules> = OnceLock::new();
+
 impl RuleEngine {
     /// Creates a new engine with default detection rules.
     ///
@@ -54,15 +63,27 @@ impl RuleEngine {
     /// Panics if any default rule contains an invalid regex pattern (compile-time invariant).
     #[must_use]
     pub fn new() -> Self {
-        let (lit_patterns, lit_rules, rx_patterns, rx_rules) = Self::default_rules();
-        debug!(
-            literal_count = lit_rules.len(),
-            regex_count = rx_rules.len(),
-            "Rule engine initialized"
-        );
+        let (lit_rules, rx_rules, ac, regex_set) = CACHED_RULES
+            .get_or_init(|| {
+                let (lit_patterns, lit_rules, rx_patterns, rx_rules) = Self::default_rules();
+                debug!(
+                    literal_count = lit_rules.len(),
+                    regex_count = rx_rules.len(),
+                    "Rule engine initialized"
+                );
 
-        let ac = AhoCorasick::new(lit_patterns).expect("Failed to build Aho-Corasick automaton");
-        let regex_set = RegexSet::new(rx_patterns).expect("Failed to build RegexSet");
+                let ac =
+                    AhoCorasick::new(lit_patterns).expect("Failed to build Aho-Corasick automaton");
+                let regex_set = RegexSet::new(rx_patterns).expect("Failed to build RegexSet");
+
+                (
+                    Arc::new(lit_rules),
+                    Arc::new(rx_rules),
+                    Arc::new(ac),
+                    Arc::new(regex_set),
+                )
+            })
+            .clone();
 
         let thresholds = HashMap::from([
             ("SQL".into(), 8),
@@ -73,10 +94,10 @@ impl RuleEngine {
         ]);
 
         Self {
-            literal_rules: Arc::new(lit_rules),
-            regex_rules: Arc::new(rx_rules),
-            ac: Arc::new(ac),
-            regex_set: Arc::new(regex_set),
+            literal_rules: lit_rules,
+            regex_rules: rx_rules,
+            ac,
+            regex_set,
             thresholds,
         }
     }
@@ -185,76 +206,42 @@ impl RuleEngine {
 
     fn sql_rules() -> Vec<(String, Rule, bool)> {
         vec![
-            Self::lit(
-                1003,
-                "/*",
-                &[Zone::Path, Zone::Query, Zone::Cookie],
-                &[("SQL", 8)],
-            ),
-            Self::lit(
-                1004,
-                "*/",
-                &[Zone::Path, Zone::Query, Zone::Cookie],
-                &[("SQL", 8)],
-            ),
-            Self::lit(
-                1005,
-                "|",
-                &[Zone::Path, Zone::Query, Zone::Cookie],
-                &[("SQL", 8)],
-            ),
-            Self::lit(
-                1006,
-                "&&",
-                &[Zone::Path, Zone::Query, Zone::Cookie],
-                &[("SQL", 8)],
-            ),
-            Self::lit(
-                1007,
-                "--",
-                &[Zone::Path, Zone::Query, Zone::Cookie],
-                &[("SQL", 4)],
-            ),
-            Self::lit(
-                1008,
-                ";",
-                &[Zone::Path, Zone::Query],
-                &[("SQL", 4), ("XSS", 8)],
-            ),
-            Self::lit(
-                1010,
-                "(",
-                &[Zone::Path, Zone::Cookie],
-                &[("SQL", 4), ("XSS", 8)],
-            ),
-            Self::lit(
-                1011,
-                ")",
-                &[Zone::Path, Zone::Cookie],
-                &[("SQL", 4), ("XSS", 8)],
-            ),
-            Self::lit(
-                1013,
-                "'",
-                &[Zone::Query, Zone::Path, Zone::Cookie],
-                &[("SQL", 4), ("XSS", 8)],
-            ),
-            Self::lit(
-                1017,
-                "@@",
-                &[Zone::Path, Zone::Query, Zone::Cookie],
-                &[("SQL", 4)],
-            ),
+            Self::lit(1010, "(", &[Zone::Cookie], &[("SQL", 4), ("XSS", 8)]),
+            Self::lit(1011, ")", &[Zone::Cookie], &[("SQL", 4), ("XSS", 8)]),
             Self::rx(
                 2001,
-                r"(?i)(union\s+(all\s+)?select)",
+                r"(?i)\b(union\s+(all\s+)?select)\b",
                 &[Zone::Query, Zone::Body],
                 &[("SQL", 8)],
             ),
             Self::rx(
-                2002,
-                r"(?i)(insert\s+into|delete\s+from|drop\s+table)",
-                &[Zone::Query, Zone::Body],
+                2101,
+                r"(?i)(?:'|\d|\)|@@)\s*(?:OR|AND|UNION|SELECT|INSERT|UPDATE|DELETE|DROP|--|#|/\*)",
+                &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
+                &[("SQL", 8)],
+            ),
+            Self::rx(
+                2102,
+                r"(?i);\s*(?:--|#|/\*|SELECT|INSERT|UPDATE|DELETE|DROP|ALTER|EXEC|UNION|TRUNCATE|DECLARE)",
+                &[Zone::Query, Zone::Body, Zone::Path],
+                &[("SQL", 8)],
+            ),
+            Self::rx(
+                2103,
+                r"(?i)(?:'|\d|\)|@@)\s*\|\||\|\|\s*(?:'|\d|@)|'\s*\||\|\s*'",
+                &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
+                &[("SQL", 8)],
+            ),
+            Self::rx(
+                2104,
+                r"(?i)(?:'|\d|\)|@@)\s*&&|&&\s*(?:'|\d|@|!|\()|'\s*&|&\s*'",
+                &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
+                &[("SQL", 8)],
+            ),
+            Self::rx(
+                2105,
+                r"(?i)@@[a-z_][a-z0-9_]*",
+                &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
                 &[("SQL", 8)],
             ),
         ]
@@ -297,11 +284,35 @@ impl RuleEngine {
 
     fn traversal_rules() -> Vec<(String, Rule, bool)> {
         vec![
-            Self::lit(
-                1200,
-                "..",
-                &[Zone::Query, Zone::Path, Zone::Cookie],
+            Self::rx(
+                2200,
+                r"(?:\.\.[/|\\])",
+                &[Zone::Query, Zone::Path, Zone::Cookie, Zone::Body],
                 &[("TRAVERSAL", 4)],
+            ),
+            Self::rx(
+                2201,
+                r"(?:[a-zA-Z]:\\)",
+                &[Zone::Query, Zone::Path, Zone::Body, Zone::Cookie],
+                &[("TRAVERSAL", 4)],
+            ),
+            Self::rx(
+                2202,
+                r"(?:\.{2,}/+)+",
+                &[Zone::Query, Zone::Path, Zone::Body, Zone::Cookie],
+                &[("TRAVERSAL", 8)],
+            ),
+            Self::rx(
+                2203,
+                r"\.\.;/",
+                &[Zone::Query, Zone::Path, Zone::Body, Zone::Cookie],
+                &[("TRAVERSAL", 8)],
+            ),
+            Self::rx(
+                2204,
+                r"(?i)%2e%2e",
+                &[Zone::Query, Zone::Path, Zone::Body, Zone::Cookie],
+                &[("TRAVERSAL", 8)],
             ),
             Self::lit(
                 1202,
@@ -321,39 +332,33 @@ impl RuleEngine {
                 &[Zone::Query, Zone::Path, Zone::Body, Zone::Cookie],
                 &[("TRAVERSAL", 4)],
             ),
-            Self::lit(
-                1205,
-                "\\",
-                &[Zone::Query, Zone::Path, Zone::Cookie],
-                &[("TRAVERSAL", 4)],
-            ),
         ]
     }
 
     fn xss_rules() -> Vec<(String, Rule, bool)> {
         vec![
-            Self::lit(
-                1302,
-                "<",
-                &[Zone::Query, Zone::Path, Zone::Cookie],
+            Self::rx(
+                2300,
+                r"(?i)<[a-z/!?]",
+                &[Zone::Query, Zone::Path, Zone::Cookie, Zone::Body],
                 &[("XSS", 8)],
             ),
-            Self::lit(
-                1303,
-                ">",
-                &[Zone::Query, Zone::Path, Zone::Cookie],
+            Self::rx(
+                2301,
+                r"(?i)String\.from(Char|Code)",
+                &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
                 &[("XSS", 8)],
             ),
-            Self::lit(
-                1312,
-                "~",
-                &[Zone::Path, Zone::Query, Zone::Cookie],
-                &[("XSS", 4)],
+            Self::rx(
+                2302,
+                r"(?i)javascript:\s*//",
+                &[Zone::Query, Zone::Body, Zone::Path],
+                &[("XSS", 8)],
             ),
-            Self::lit(
-                1314,
-                "`",
-                &[Zone::Query, Zone::Path, Zone::Cookie],
+            Self::rx(
+                2303,
+                r"(?i)data:[^,]+;base64",
+                &[Zone::Query, Zone::Body, Zone::Path],
                 &[("XSS", 8)],
             ),
             Self::rx(
@@ -378,20 +383,12 @@ impl RuleEngine {
     }
 
     fn evade_rules() -> Vec<(String, Rule, bool)> {
-        vec![
-            Self::lit(
-                1400,
-                "&#",
-                &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
-                &[("EVADE", 4)],
-            ),
-            Self::lit(
-                1401,
-                "%U",
-                &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
-                &[("EVADE", 4)],
-            ),
-        ]
+        vec![Self::lit(
+            1401,
+            "%U",
+            &[Zone::Query, Zone::Body, Zone::Path, Zone::Cookie],
+            &[("EVADE", 4)],
+        )]
     }
 
     fn lit(id: u32, pattern: &str, zones: &[Zone], scores: &[(&str, u32)]) -> (String, Rule, bool) {
@@ -466,5 +463,126 @@ mod tests {
         let eval = engine.evaluate("/../../etc/passwd", "", "", "");
         assert!(eval.blocked);
         assert!(*eval.scores.get("TRAVERSAL").unwrap_or(&0) >= 4);
+    }
+
+    #[test]
+    fn test_context_aware_sqli_false_positives() {
+        let engine = RuleEngine::new();
+
+        let safe_inputs = [
+            "shoes|bags",
+            "a&&b",
+            "I'm happy",
+            "Hello; world",
+            "search=A & B",
+            "Hello -- World",
+            "user@example.com",
+            "/* inline comment */",
+        ];
+
+        for input in safe_inputs {
+            let eval = engine.evaluate("", &format!("q={input}"), "", "");
+            assert!(
+                !eval.blocked,
+                "False positive blocked: '{input}'. matched_rules: {:?}",
+                eval.matched_rules
+            );
+        }
+
+        let malicious_inputs = [
+            "1; DROP TABLE users",
+            "1'; DROP TABLE users",
+            "' || 'a'='a",
+            "1' OR '1'='1",
+            "1 UNION SELECT",
+            "1 && 1=1",
+            "1); DROP TABLE",
+            "1 --",
+            "@@version",
+            "1 /*! UNION */",
+        ];
+
+        for input in malicious_inputs {
+            let eval = engine.evaluate("", &format!("q={input}"), "", "");
+            assert!(
+                eval.blocked,
+                "False negative allowed: '{input}'. matched_rules: {:?}",
+                eval.matched_rules
+            );
+        }
+    }
+
+    #[test]
+    fn test_context_aware_non_sqli_false_positives() {
+        let engine = RuleEngine::new();
+
+        let safe_cases = [
+            "1 < 2",
+            "I <3 u",
+            "Loading...",
+            "ver 1..2",
+            r"Line 1\nLine 2",
+        ];
+
+        for input in safe_cases {
+            let eval = engine.evaluate("", &format!("q={input}"), "", "");
+            assert!(
+                !eval.blocked,
+                "False positive blocked: '{input}'. Matched: {:?}",
+                eval.matched_rules
+            );
+        }
+
+        let blocked_cases = [
+            "<b>bold</b>",
+            "<script>alert(1)</script>",
+            "../etc/passwd",
+            r"..\windows\system32",
+            r"C:\Windows\System32",
+        ];
+
+        for input in blocked_cases {
+            let eval = engine.evaluate("", &format!("q={input}"), "", "");
+            assert!(
+                eval.blocked,
+                "False negative allowed: '{input}'. Matched: {:?}",
+                eval.matched_rules
+            );
+        }
+    }
+
+    #[test]
+    fn test_evasion_rules() {
+        let engine = RuleEngine::new();
+
+        let safe_inputs = [
+            "The labor union selected a new leader",
+            "Please insert into the slot",
+            "I will drop table tennis from my hobbies",
+        ];
+
+        for input in safe_inputs {
+            let eval = engine.evaluate("", &format!("q={input}"), "", "");
+            assert!(!eval.blocked, "blocked legitimate input: {input}");
+        }
+
+        let evasion_payloads = [
+            "String.fromCharCode(88,83,83)",
+            "javascript://%250Aalert(1)",
+            "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
+            "....//....//etc/passwd",
+            "..;/etc/passwd",
+            "%2e%2e/etc/passwd",
+            "1'/**/UNION/**/SELECT",
+            "1'/*!UNION*/SELECT",
+            "id=-1' UNION ALL SELECT password FROM users--",
+            "admin' --",
+            "admin' #",
+        ];
+
+        for input in evasion_payloads {
+            let eval = engine.evaluate("", &format!("q={input}"), "", "");
+            assert!(eval.blocked, "allowed malicious input: {input}");
+        }
     }
 }

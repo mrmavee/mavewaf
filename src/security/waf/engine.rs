@@ -237,7 +237,7 @@ impl WafEngine {
 
             match ip {
                 std::net::IpAddr::V4(ipv4) => {
-                    if ipv4.is_private() || ipv4.is_link_local() {
+                    if ipv4.is_private() || ipv4.is_link_local() || ipv4.is_unspecified() {
                         return true;
                     }
                     let octets = ipv4.octets();
@@ -370,6 +370,9 @@ mod tests {
             "/var/log/../../etc/shadow"
         ));
         assert!(WafEngine::detect_path_traversal("%2e%2e/etc/passwd"));
+        assert!(WafEngine::detect_path_traversal("/home/user/file\0.txt"));
+        assert!(WafEngine::detect_path_traversal("..\\windows\\system32"));
+        assert!(WafEngine::detect_path_traversal("/proc/self/environ"));
         assert!(!WafEngine::detect_path_traversal("/home/user/file.txt"));
     }
 
@@ -382,7 +385,12 @@ mod tests {
         assert!(engine.detect_ssrf("http://127.0.0.1/admin"));
         assert!(engine.detect_ssrf("file:///etc/passwd"));
         assert!(engine.detect_ssrf("gopher://localhost:6379"));
+        assert!(engine.detect_ssrf("http://[::1]/"));
+        assert!(engine.detect_ssrf("http://169.254.169.254/latest"));
+        assert!(engine.detect_ssrf("c:\\windows\\system32\\drivers\\etc\\hosts"));
+        assert!(engine.detect_ssrf("/?url=http://127.0.0.1"));
         assert!(!engine.detect_ssrf("https://example.com"));
+        assert!(!engine.detect_ssrf("/search?q=rust"));
     }
 
     #[test]
@@ -396,6 +404,9 @@ mod tests {
         assert!(engine.is_dangerous_url("http://127.0.0.1"));
         assert!(engine.is_dangerous_url("http://[::1]"));
         assert!(engine.is_dangerous_url("http://169.254.169.254/latest/meta-data/"));
+        assert!(engine.is_dangerous_url("ftp://example.com"));
+        assert!(engine.is_dangerous_url("dict://example.com"));
+        assert!(engine.is_dangerous_url("http://0.0.0.0"));
         assert!(!engine.is_dangerous_url("https://example.com"));
     }
 

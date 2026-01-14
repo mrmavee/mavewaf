@@ -10,6 +10,10 @@ services:
       - INTERNAL_ADDR=127.0.0.1:8081
       - BACKEND_URL=http://backend:9000
       # - LOGO_PATH=/etc/mavewaf/your-logo.png
+    # ports:
+    #   - "127.0.0.1:8080:8080"
+    #   - "${I2P_PORT:-4567}:4567"
+    #   - "${I2P_PORT:-4567}:4567/udp"
     volumes:
       # - ./logo.png:/etc/mavewaf/your-logo.png:ro
       - ./tor_keys/mave:/var/lib/tor/hidden_service/
@@ -24,6 +28,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp:noexec,nosuid,size=64m
+      - /var/log:noexec,nosuid,size=16m
     cap_drop:
       - ALL
     cap_add:
