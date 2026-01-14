@@ -19,7 +19,7 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background: #111;
+            background: #050505;
             color: #d1d5db;
             min-height: 100vh;
             width: 100%;
@@ -31,18 +31,17 @@
 
         .card {
             width: 100%;
-            max-width: 400px;
-            background: #1a1a1a;
-            border: 1px solid rgba(255, 255, 255, .1);
+            max-width: 500px;
+            background: #0a0a0a;
+            border: 1px solid rgba(255, 255, 255, .08);
             border-radius: .5rem;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, .25);
-            padding: 1.25rem;
-
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, .5);
+            padding: 2.5rem;
         }
 
         @media(min-width:640px) {
             .card {
-                padding: 2.5rem
+                padding: 3rem
             }
         }
 
@@ -50,7 +49,7 @@
             color: #fff;
             font-weight: 600;
             font-size: 1.5rem;
-            margin-bottom: 1.25rem;
+            margin-bottom: 2rem;
             text-align: center
         }
 
@@ -59,7 +58,7 @@
             border: 1px solid rgba(239, 68, 68, .2);
             color: #f87171;
             padding: 1rem;
-            border-radius: .5rem;
+            border-radius: .25rem;
             font-size: 1rem;
             margin-bottom: 1.25rem;
             text-align: center
@@ -75,20 +74,20 @@
             gap: 4px;
             flex-wrap: wrap;
             position: relative;
-            padding-top: 170px;
+            padding-top: 250px;
         }
 
         .ch {
             text-align: center;
             text-transform: uppercase;
-            background: #262626;
-            border: 1px solid rgba(255, 255, 255, .1);
+            background: #171717;
+            border: 1px solid rgba(255, 255, 255, .08);
             color: #3b82f6;
             font-size: 1.25rem;
             line-height: 2.5rem;
             width: 2.5rem;
             height: 2.5rem;
-            border-radius: .375rem;
+            border-radius: .125rem;
             font-family: ui-monospace, monospace;
             flex-shrink: 0
         }
@@ -96,44 +95,44 @@
         .ch:focus {
             border-color: #3b82f6;
             outline: none;
-            box-shadow: 0 0 0 3px rgba(59, 130, 246, .3)
+            box-shadow: 0 0 0 1px rgba(59, 130, 246, .5)
         }
 
         .image {
-            width: 20px;
-            height: 20px;
+            width: 32px;
+            height: 32px;
             transform-origin: center;
-            transform: scale(7);
+            transform: scale(6);
             transition: all .2s ease-in;
             border-radius: 50%;
             border: 1px solid #3b82f6;
 
             position: absolute;
-            top: 70px;
+            top: 110px;
             left: 50%;
-            margin-left: -10px;
+            margin-left: -16px;
 
             pointer-events: none;
-            background-color: #1a1e23;
+            background-color: #0a0a0a;
             background-size: 160px 160px;
             background-position: center
         }
 
         .submit-btn {
             width: 100%;
-            background: #3b82f6;
+            background: #2563eb;
             color: #fff;
             font-size: 1.125rem;
             font-weight: 500;
             padding: .875rem;
             border: none;
-            border-radius: .375rem;
+            border-radius: .125rem;
             cursor: pointer;
             transition: background .2s
         }
 
         .submit-btn:hover {
-            background: #2563eb
+            background: #1d4ed8
         }
 
         .hint {
@@ -159,7 +158,7 @@
 
         .footer span {
             font-size: .875rem;
-            color: #9ca3af;
+            color: #525252;
             font-family: ui-monospace, monospace
         }
     </style>

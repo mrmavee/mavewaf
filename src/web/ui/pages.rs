@@ -162,11 +162,11 @@ pub fn get_captcha_page(
         CaptchaStyle::Complex => {
             let mut css = String::from("<style>\n");
             for (i, pos) in positions.iter().enumerate() {
-                let css_x = 164.0 - pos.x;
-                let css_y = 164.0 - pos.y;
+                let css_x = 12.00 - pos.x;
+                let css_y = 4.00 - pos.y;
                 let _ = writeln!(
                     css,
-                    "input[name=c{}]:focus ~ .image {{ background-position: {:.0}px {:.0}px; transform: rotate({:.0}deg) scale(6) !important; }}",
+                    "input[name=c{}]:focus ~ .image {{ background-position: {:.2}px {:.2}px; transform: rotate({:.2}deg) scale(6) !important; }}",
                     i + 1,
                     css_x,
                     css_y,
