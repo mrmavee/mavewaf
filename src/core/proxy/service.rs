@@ -347,11 +347,7 @@ impl MaveProxy {
         Ok(())
     }
 
-    async fn handle_karma_block(
-        &self,
-        session: &mut Session,
-        ctx: &RequestCtx,
-    ) -> Result<bool> {
+    async fn handle_karma_block(&self, session: &mut Session, ctx: &RequestCtx) -> Result<bool> {
         let Some(ref cid) = ctx.circuit_id else {
             return Ok(false);
         };
@@ -372,7 +368,11 @@ impl MaveProxy {
         serve_html(session, &self.config, 403, html, None).await
     }
 
-    async fn handle_missing_circuit(&self, session: &mut Session, ctx: &RequestCtx) -> Result<bool> {
+    async fn handle_missing_circuit(
+        &self,
+        session: &mut Session,
+        ctx: &RequestCtx,
+    ) -> Result<bool> {
         if ctx.circuit_id.is_some() {
             return Ok(false);
         }
