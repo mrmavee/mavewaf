@@ -20,7 +20,7 @@ if [ -d "/var/lib/tor" ]; then
 fi
 
 echo "[entrypoint] Starting Tor..."
-su-exec tor tor -f /etc/tor/torrc > $TOR_LOG 2>&1 &
+su-exec tor sh -c "tor -f /etc/tor/torrc > $TOR_LOG 2>&1" &
 TOR_PID=$!
 
 tail -f $TOR_LOG &
@@ -66,7 +66,7 @@ if [ "$I2P_ENABLED" = "true" ]; then
     chown i2pd:i2pd $I2P_LOG
     
     echo "[entrypoint] Starting i2pd..."
-    su-exec i2pd i2pd --conf=/etc/i2pd/i2pd.conf --tunconf=/etc/i2pd/tunnels.conf --datadir=/var/lib/i2pd > $I2P_LOG 2>&1 &
+    su-exec i2pd sh -c "i2pd --conf=/etc/i2pd/i2pd.conf --tunconf=/etc/i2pd/tunnels.conf --datadir=/var/lib/i2pd > $I2P_LOG 2>&1" &
     
     sleep 3
     if pgrep -x "i2pd" > /dev/null; then
