@@ -318,6 +318,74 @@ impl MaveProxy {
         );
         serve_html(session, &self.config, 403, html, None).await
     }
+
+    async fn send_early_hints(&self, session: &mut Session) -> Result<()> {
+        if self.config.early_hints_links.is_empty() {
+            return Ok(());
+        }
+
+        let mut header = ResponseHeader::build(103, None)?;
+        for link in &self.config.early_hints_links {
+            let ext = std::path::Path::new(link)
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase);
+
+            let as_type = match ext.as_deref() {
+                Some("css") => "style",
+                Some("js" | "mjs") => "script",
+                Some("woff" | "woff2" | "ttf" | "otf" | "eot") => "font",
+                Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "svg") => "image",
+                _ => "fetch",
+            };
+            header.append_header("Link", format!("<{link}>; rel=preload; as={as_type}"))?;
+        }
+
+        session
+            .write_response_header(Box::new(header), false)
+            .await?;
+        Ok(())
+    }
+
+    async fn handle_karma_block(
+        &self,
+        session: &mut Session,
+        ctx: &RequestCtx,
+    ) -> Result<bool> {
+        let Some(ref cid) = ctx.circuit_id else {
+            return Ok(false);
+        };
+
+        if !self.defense_monitor.check_karma_threshold(cid) {
+            return Ok(false);
+        }
+
+        info!(circuit_id = %cid, action = "KARMA_BLOCK", "Blocking circuit with excessive karma");
+        self.kill_circuit_if_possible(Some(cid)).await;
+
+        let html = ui::get_error_page(
+            "Access Denied",
+            "Your connection has been terminated due to repeated violations.",
+            None,
+            Some(&self.config),
+        );
+        serve_html(session, &self.config, 403, html, None).await
+    }
+
+    async fn handle_missing_circuit(&self, session: &mut Session, ctx: &RequestCtx) -> Result<bool> {
+        if ctx.circuit_id.is_some() {
+            return Ok(false);
+        }
+
+        warn!("Request rejected: missing circuit ID");
+        let html = ui::get_error_page(
+            "Access Denied",
+            "Direct IP access is not allowed. Please use the hidden service.",
+            None,
+            Some(&self.config),
+        );
+        serve_html(session, &self.config, 403, html, None).await
+    }
 }
 
 #[async_trait]
@@ -371,15 +439,12 @@ impl ProxyHttp for MaveProxy {
             return Ok(true);
         }
 
-        if ctx.circuit_id.is_none() {
-            warn!("Request rejected: missing circuit ID");
-            let html = ui::get_error_page(
-                "Access Denied",
-                "Direct IP access is not allowed. Please use the hidden service.",
-                None,
-                Some(&self.config),
-            );
-            return serve_html(session, &self.config, 403, html, None).await;
+        if self.handle_karma_block(session, ctx).await? {
+            return Ok(true);
+        }
+
+        if self.handle_missing_circuit(session, ctx).await? {
+            return Ok(true);
         }
 
         let is_static = Self::is_static_asset(session);
@@ -444,6 +509,10 @@ impl ProxyHttp for MaveProxy {
                     .serve_queue_page(session, ctx, &uri, now)
                     .await;
             }
+        }
+
+        if !is_static {
+            self.send_early_hints(session).await?;
         }
 
         self.handle_waf_and_router(session, ctx).await
@@ -654,6 +723,7 @@ mod tests {
             coop_policy: "same-origin-allow-popups".to_string(),
             honeypot_paths: std::collections::HashSet::new(),
             karma_threshold: 50,
+            early_hints_links: Vec::new(),
         })
     }
 

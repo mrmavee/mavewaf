@@ -187,6 +187,8 @@ pub struct Config {
     pub honeypot_paths: HashSet<String>,
     /// Karma threshold for circuit termination (default 50).
     pub karma_threshold: u32,
+    /// Preload links for HTTP 103 Early Hints (comma-separated paths).
+    pub early_hints_links: Vec<String>,
 }
 
 impl Config {
@@ -296,6 +298,11 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
             karma_threshold: get_env_u32_or("KARMA_THRESHOLD", 50),
+            early_hints_links: get_env_or("EARLY_HINTS_LINKS", "")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         })
     }
 

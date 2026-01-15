@@ -156,6 +156,7 @@ mod tests {
             coop_policy: "same-origin-allow-popups".to_string(),
             honeypot_paths: std::collections::HashSet::new(),
             karma_threshold: 50,
+            early_hints_links: Vec::new(),
         })
     }
 

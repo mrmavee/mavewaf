@@ -81,6 +81,7 @@ fn create_test_config(backend_port: u16) -> Arc<Config> {
         coop_policy: "same-origin-allow-popups".to_string(),
         honeypot_paths: std::collections::HashSet::new(),
         karma_threshold: 50,
+        early_hints_links: Vec::new(),
     })
 }
 
@@ -1494,4 +1495,56 @@ async fn test_honeypot_trap() {
         .unwrap();
 
     assert_eq!(resp3.status(), 200);
+}
+
+#[tokio::test]
+async fn test_karma_enforcement() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.karma_threshold = 10;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    for i in 0..8 {
+        let _ = client
+            .get(format!("http://127.0.0.1:{proxy_port}/not-found-{i}"))
+            .header("X-Circuit-Id", "karma_test_circuit")
+            .send()
+            .await
+            .unwrap();
+    }
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let blocked_resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/should-be-blocked"))
+        .header("X-Circuit-Id", "karma_test_circuit")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(blocked_resp.status(), 403);
+}
+
+#[tokio::test]
+async fn test_early_hints() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.early_hints_links = vec!["/css/style.css".to_string(), "/js/app.js".to_string()];
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let resp = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("X-Circuit-Id", "early_hints_test")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
 }
