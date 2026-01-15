@@ -5,7 +5,7 @@
 use crate::config::{Config, WafMode};
 use papaya::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// Monitors traffic patterns and triggers defense mode when thresholds are exceeded.
@@ -14,6 +14,7 @@ pub struct DefenseMonitor {
     error_count: AtomicU64,
     request_count: AtomicU64,
     circuit_counts: HashMap<String, AtomicU64>,
+    circuit_karma: HashMap<String, AtomicU32>,
     last_reset: std::sync::Mutex<Instant>,
     last_reset_epoch: AtomicU64,
     current_mode: std::sync::atomic::AtomicU8,
@@ -40,6 +41,7 @@ impl DefenseMonitor {
             error_count: AtomicU64::new(0),
             request_count: AtomicU64::new(0),
             circuit_counts: HashMap::new(),
+            circuit_karma: HashMap::new(),
             last_reset: std::sync::Mutex::new(Instant::now()),
             last_reset_epoch: AtomicU64::new(now_epoch),
             current_mode: std::sync::atomic::AtomicU8::new(initial_mode),
@@ -181,6 +183,31 @@ impl DefenseMonitor {
             WafMode::Normal
         }
     }
+
+    pub fn add_karma(&self, circuit_id: &str, points: u32) -> u32 {
+        let karma = self.circuit_karma.pin();
+        karma.get(circuit_id).map_or_else(
+            || {
+                karma.insert(circuit_id.to_string(), AtomicU32::new(points));
+                points
+            },
+            |score| score.fetch_add(points, Ordering::Relaxed) + points,
+        )
+    }
+
+    #[must_use]
+    pub fn get_karma(&self, circuit_id: &str) -> u32 {
+        self.circuit_karma
+            .pin()
+            .get(circuit_id)
+            .map_or(0, |v| v.load(Ordering::Relaxed))
+    }
+
+    #[must_use]
+    pub fn check_karma_threshold(&self, circuit_id: &str) -> bool {
+        let karma = self.get_karma(circuit_id);
+        karma >= self.config.karma_threshold
+    }
 }
 
 #[cfg(test)]
@@ -231,6 +258,7 @@ mod tests {
             csp_extra_sources: String::new(),
             coop_policy: "same-origin-allow-popups".to_string(),
             honeypot_paths: std::collections::HashSet::new(),
+            karma_threshold: 50,
         })
     }
 
@@ -311,5 +339,26 @@ mod tests {
 
         assert!(!monitor.is_defense_mode());
         assert_eq!(monitor.defense_started_at(), 0);
+    }
+
+    #[test]
+    fn test_karma_accumulation() {
+        let config = create_test_config();
+        let monitor = DefenseMonitor::new(config);
+
+        assert_eq!(monitor.get_karma("circuit_1"), 0);
+
+        let total = monitor.add_karma("circuit_1", 10);
+        assert_eq!(total, 10);
+        assert_eq!(monitor.get_karma("circuit_1"), 10);
+
+        let total2 = monitor.add_karma("circuit_1", 25);
+        assert_eq!(total2, 35);
+        assert_eq!(monitor.get_karma("circuit_1"), 35);
+
+        assert!(!monitor.check_karma_threshold("circuit_1"));
+
+        monitor.add_karma("circuit_1", 20);
+        assert!(monitor.check_karma_threshold("circuit_1"));
     }
 }

@@ -573,6 +573,24 @@ impl ProxyHttp for MaveProxy {
         self.defense_monitor
             .record_request(ctx.circuit_id.as_deref(), ctx.is_error);
 
+        if let Some(ref cid) = ctx.circuit_id {
+            let karma_points = match status {
+                400 => 2,
+                404 => 1,
+                403 => 5,
+                429 => 10,
+                500..=599 => 3,
+                _ => 0,
+            };
+
+            if karma_points > 0 {
+                let total = self.defense_monitor.add_karma(cid, karma_points);
+                if self.defense_monitor.check_karma_threshold(cid) {
+                    info!(circuit_id = %cid, karma = total, action = "KARMA_KILL", "Circuit karma threshold exceeded");
+                }
+            }
+        }
+
         let circuit = ctx.circuit_id.as_deref().unwrap_or("direct");
         debug!(circuit_id = %circuit, status = status, "Request completed");
 
@@ -635,6 +653,7 @@ mod tests {
             csp_extra_sources: String::new(),
             coop_policy: "same-origin-allow-popups".to_string(),
             honeypot_paths: std::collections::HashSet::new(),
+            karma_threshold: 50,
         })
     }
 

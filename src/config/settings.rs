@@ -185,6 +185,8 @@ pub struct Config {
     pub coop_policy: String,
     /// Honeypot paths that trigger instant circuit termination.
     pub honeypot_paths: HashSet<String>,
+    /// Karma threshold for circuit termination (default 50).
+    pub karma_threshold: u32,
 }
 
 impl Config {
@@ -293,6 +295,7 @@ impl Config {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect(),
+            karma_threshold: get_env_u32_or("KARMA_THRESHOLD", 50),
         })
     }
 
