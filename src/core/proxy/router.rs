@@ -80,6 +80,7 @@ impl WafRouter {
     ) -> Result<bool> {
         let path = session.req_header().uri.path();
         let method = session.req_header().method.clone();
+        let request_uri = session.req_header().uri.to_string();
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -109,8 +110,7 @@ impl WafRouter {
             }
 
             return Ok(false);
-        } else if path == "/"
-            && method == pingora::http::Method::POST
+        } else if method == pingora::http::Method::POST
             && let Ok(Some(body)) = session.read_request_body().await
         {
             if !self.config.features.captcha_enabled {
@@ -122,7 +122,10 @@ impl WafRouter {
 
             let queue_ok = session_state.as_ref().is_some_and(|s| s.queue_completed);
             if !queue_ok {
-                return self.handler.serve_queue_page(session, ctx, "/", now).await;
+                return self
+                    .handler
+                    .serve_queue_page(session, ctx, &request_uri, now)
+                    .await;
             }
 
             return self
@@ -140,28 +143,80 @@ impl WafRouter {
         } else if let Some(sess) = session_state
             && sess.queue_started_at > 0
         {
-            let waited = now.saturating_sub(sess.queue_started_at);
-            if waited >= 5 {
-                if !self.config.features.captcha_enabled {
-                    return self.handler.serve_access_page(session, ctx).await;
-                }
-
-                let mut new_session = sess.clone();
-                new_session.queue_completed = true;
-                new_session.captcha_gen_count = 1;
-                let cookie_val = self.cookie_crypto.encrypt(&new_session.to_bytes());
-                let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
-
-                return self
-                    .handler
-                    .serve_captcha_page_with_cookie(session, ctx, false, &cookie_header)
-                    .await;
-            }
-
-            return self.handler.serve_queue_page(session, ctx, "/", now).await;
+            let sess_clone = sess.clone();
+            return self
+                .handle_queue_check(session, ctx, &sess_clone, &request_uri, now)
+                .await;
         }
 
-        self.handler.serve_queue_page(session, ctx, "/", now).await
+        self.handler
+            .serve_queue_page(session, ctx, &request_uri, now)
+            .await
+    }
+
+    async fn handle_queue_check(
+        &self,
+        session: &mut Session,
+        ctx: &mut RequestCtx,
+        sess: &crate::core::middleware::EncryptedSession,
+        request_uri: &str,
+        now: u64,
+    ) -> Result<bool> {
+        let waited = now.saturating_sub(sess.queue_started_at);
+        let elapsed_since_active = now.saturating_sub(sess.last_active_at);
+
+        if elapsed_since_active < 2 && waited < 5 {
+            let mut reset_session = sess.clone();
+            reset_session.queue_started_at = now;
+            reset_session.last_active_at = now;
+            let cookie_val = self.cookie_crypto.encrypt(&reset_session.to_bytes());
+            let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
+
+            return self
+                .handler
+                .serve_queue_page_with_time_and_cookie(
+                    session,
+                    ctx,
+                    request_uri,
+                    5,
+                    Some(&cookie_header),
+                )
+                .await;
+        }
+
+        if waited >= 5 {
+            if !self.config.features.captcha_enabled {
+                return self.handler.serve_access_page(session, ctx).await;
+            }
+
+            let mut new_session = sess.clone();
+            new_session.queue_completed = true;
+            new_session.captcha_gen_count = 1;
+            new_session.last_active_at = now;
+            let cookie_val = self.cookie_crypto.encrypt(&new_session.to_bytes());
+            let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
+
+            return self
+                .handler
+                .serve_captcha_page_with_cookie(session, ctx, false, &cookie_header)
+                .await;
+        }
+
+        let remaining = 5u64.saturating_sub(waited).max(1);
+        let mut updated_session = sess.clone();
+        updated_session.last_active_at = now;
+        let cookie_val = self.cookie_crypto.encrypt(&updated_session.to_bytes());
+        let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
+
+        self.handler
+            .serve_queue_page_with_time_and_cookie(
+                session,
+                ctx,
+                request_uri,
+                remaining,
+                Some(&cookie_header),
+            )
+            .await
     }
 }
 

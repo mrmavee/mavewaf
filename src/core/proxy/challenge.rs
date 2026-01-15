@@ -79,6 +79,7 @@ impl ChallengeHandler {
             captcha_gen_count: 0,
             verified: false,
             verified_at: 0,
+            last_active_at: now,
         };
         let cookie_header = self.create_session_cookie(&new_session, 300);
         let html = ui::get_queue_page(5, &new_session.session_id, target_url, &self.config);
@@ -97,13 +98,30 @@ impl ChallengeHandler {
         target_url: &str,
         remaining: u64,
     ) -> Result<bool> {
+        self.serve_queue_page_with_time_and_cookie(session, ctx, target_url, remaining, None)
+            .await
+    }
+
+    /// Serves the queue page with remaining time and an optional cookie.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the response cannot be written.
+    pub async fn serve_queue_page_with_time_and_cookie(
+        &self,
+        session: &mut Session,
+        ctx: &RequestCtx,
+        target_url: &str,
+        remaining: u64,
+        cookie_header: Option<&str>,
+    ) -> Result<bool> {
         debug!(circuit_id = ?ctx.circuit_id, remaining_seconds = remaining, "Queue in progress");
         let session_id = ctx
             .session_data
             .as_ref()
             .map_or("unknown", |s| s.session_id.as_str());
         let html = ui::get_queue_page(remaining, session_id, target_url, &self.config);
-        serve_html(session, &self.config, 200, html, None).await
+        serve_html(session, &self.config, 200, html, cookie_header).await
     }
 
     /// Serves the CAPTCHA page.
@@ -298,9 +316,10 @@ impl ChallengeHandler {
                 session_id = ?session_id,
                 "Access verified via click-to-enter"
             );
+            let uri = session.req_header().uri.to_string();
             let new_session = Self::create_verified_session(ctx, now);
             let cookie_header = self.create_session_cookie(&new_session, 3600);
-            serve_redirect(session, &self.config, "/", Some(&cookie_header), true).await
+            serve_redirect(session, &self.config, &uri, Some(&cookie_header), true).await
         } else {
             warn!(
                 circuit_id = ?ctx.circuit_id,
@@ -332,9 +351,10 @@ impl ChallengeHandler {
                 session_id = ?ctx.session_data.as_ref().map(|s| &s.session_id),
                 "CAPTCHA verified"
             );
+            let uri = session.req_header().uri.to_string();
             let new_session = Self::create_verified_session(ctx, now);
             let cookie_header = self.create_session_cookie(&new_session, 3600);
-            serve_redirect(session, &self.config, "/", Some(&cookie_header), true).await
+            serve_redirect(session, &self.config, &uri, Some(&cookie_header), true).await
         } else {
             self.handle_captcha_failure(session, ctx, now).await
         }
@@ -351,6 +371,7 @@ impl ChallengeHandler {
             captcha_gen_count: 0,
             verified: true,
             verified_at: now,
+            last_active_at: now,
         }
     }
 
@@ -384,6 +405,7 @@ impl ChallengeHandler {
                 captcha_gen_count: 0,
                 verified: false,
                 verified_at: 0,
+                last_active_at: now,
             };
             let cookie_header = self.create_session_cookie(&reset_session, 300);
             return serve_redirect(session, &self.config, &uri, Some(&cookie_header), true).await;
@@ -414,6 +436,7 @@ mod tests {
             .as_secs();
         let session = EncryptedSession {
             queue_started_at: now - 10,
+            verified: false,
             ..Default::default()
         };
         assert!(ChallengeHandler::check_queue_bypass(&session).is_none());

@@ -18,6 +18,7 @@ pub struct EncryptedSession {
     pub captcha_gen_count: u8,
     pub verified: bool,
     pub verified_at: u64,
+    pub last_active_at: u64,
 }
 
 impl EncryptedSession {
@@ -25,7 +26,7 @@ impl EncryptedSession {
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         format!(
-            "{}|{}|{}|{}|{}|{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
             self.session_id,
             self.circuit_id.as_deref().unwrap_or(""),
             self.created_at,
@@ -34,7 +35,8 @@ impl EncryptedSession {
             self.captcha_failures,
             self.captcha_gen_count,
             u8::from(self.verified),
-            self.verified_at
+            self.verified_at,
+            self.last_active_at
         )
         .into_bytes()
     }
@@ -45,7 +47,7 @@ impl EncryptedSession {
         let s = std::str::from_utf8(data).ok()?;
         let parts: Vec<&str> = s.split('|').collect();
 
-        if parts.len() < 8 || parts.len() > 9 {
+        if parts.len() < 8 || parts.len() > 10 {
             return None;
         }
 
@@ -56,8 +58,14 @@ impl EncryptedSession {
             return None;
         }
 
-        let verified_at = if parts.len() == 9 {
+        let verified_at = if parts.len() >= 9 {
             parts[8].parse().ok()?
+        } else {
+            0
+        };
+
+        let last_active_at = if parts.len() == 10 {
+            parts[9].parse().ok()?
         } else {
             0
         };
@@ -76,6 +84,7 @@ impl EncryptedSession {
             captcha_gen_count: parts[6].parse().ok()?,
             verified: parts[7] == "1",
             verified_at,
+            last_active_at,
         })
     }
 }
@@ -114,6 +123,7 @@ mod tests {
             captcha_gen_count: 2,
             verified: true,
             verified_at: now + 100,
+            last_active_at: now,
         };
 
         let bytes = session.to_bytes();
