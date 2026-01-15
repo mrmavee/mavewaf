@@ -326,6 +326,7 @@ mod tests {
             log_format: "json".to_string(),
             csp_extra_sources: String::new(),
             coop_policy: "same-origin-allow-popups".to_string(),
+            honeypot_paths: std::collections::HashSet::new(),
         }
     }
 

@@ -79,6 +79,7 @@ fn create_test_config(backend_port: u16) -> Arc<Config> {
         log_format: "pretty".to_string(),
         csp_extra_sources: String::new(),
         coop_policy: "same-origin-allow-popups".to_string(),
+        honeypot_paths: std::collections::HashSet::new(),
     })
 }
 
@@ -1448,4 +1449,48 @@ async fn test_tor_cookie_flag() {
     assert_eq!(resp.status(), 200);
     let cookie = resp.headers().get("Set-Cookie").unwrap().to_str().unwrap();
     assert!(cookie.contains("; Secure"));
+}
+
+#[tokio::test]
+async fn test_honeypot_trap() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.honeypot_paths = ["/.env", "/.git/HEAD", "/wp-admin"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/.env"))
+        .header("X-Circuit-Id", "circuit_honeypot_1")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+
+    let resp2 = client
+        .get(format!("http://127.0.0.1:{proxy_port}/.git/HEAD"))
+        .header("X-Circuit-Id", "circuit_honeypot_2")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp2.status(), 403);
+
+    let resp3 = client
+        .get(format!("http://127.0.0.1:{proxy_port}/normal-page"))
+        .header("X-Circuit-Id", "circuit_honeypot_3")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp3.status(), 200);
 }

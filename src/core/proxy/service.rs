@@ -281,6 +281,43 @@ impl MaveProxy {
         }
         false
     }
+
+    async fn handle_honeypot(
+        &self,
+        session: &mut Session,
+        ctx: &RequestCtx,
+        path: &str,
+    ) -> Result<bool> {
+        if !self.config.honeypot_paths.contains(path) {
+            return Ok(false);
+        }
+
+        info!(path = %path, circuit_id = ?ctx.circuit_id, action = "HONEYPOT", "Honeypot trap triggered");
+        self.kill_circuit_if_possible(ctx.circuit_id.as_deref())
+            .await;
+
+        self.webhook.notify(WebhookPayload {
+            event_type: EventType::CircuitKilled,
+            timestamp: i64::try_from(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            )
+            .unwrap_or(0),
+            circuit_id: ctx.circuit_id.clone(),
+            severity: 5,
+            message: format!("Honeypot triggered: {path}"),
+        });
+
+        let html = ui::get_error_page(
+            "Access Denied",
+            "The requested resource is not available.",
+            None,
+            Some(&self.config),
+        );
+        serve_html(session, &self.config, 403, html, None).await
+    }
 }
 
 #[async_trait]
@@ -328,6 +365,11 @@ impl ProxyHttp for MaveProxy {
 
         ctx.circuit_id = Self::extract_circuit_id(session);
         self.extract_session(session, ctx);
+
+        let path_owned = path.to_string();
+        if self.handle_honeypot(session, ctx, &path_owned).await? {
+            return Ok(true);
+        }
 
         if ctx.circuit_id.is_none() {
             warn!("Request rejected: missing circuit ID");
@@ -592,6 +634,7 @@ mod tests {
             log_format: "json".to_string(),
             csp_extra_sources: String::new(),
             coop_policy: "same-origin-allow-popups".to_string(),
+            honeypot_paths: std::collections::HashSet::new(),
         })
     }
 

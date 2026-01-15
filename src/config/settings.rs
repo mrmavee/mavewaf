@@ -2,6 +2,7 @@
 //!
 //! Defines the main `Config` struct and environment variable loading logic.
 
+use std::collections::HashSet;
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -182,6 +183,8 @@ pub struct Config {
     pub csp_extra_sources: String,
     /// Cross-Origin-Opener-Policy: "same-origin", "same-origin-allow-popups", or "unsafe-none".
     pub coop_policy: String,
+    /// Honeypot paths that trigger instant circuit termination.
+    pub honeypot_paths: HashSet<String>,
 }
 
 impl Config {
@@ -285,6 +288,11 @@ impl Config {
             log_format: get_env_or("LOG_FORMAT", "json"),
             csp_extra_sources: get_env_or("CSP_EXTRA_SOURCES", ""),
             coop_policy: get_env_or("COOP_POLICY", "same-origin-allow-popups"),
+            honeypot_paths: get_env_or("HONEYPOT_PATHS", "/.env,/.git,/.git/HEAD,/.git/config,/.aws,/.aws/credentials,/wp-admin,/wp-login.php,/phpmyadmin,/config.php,/.htaccess,/.htpasswd,/backup.sql,/database.sql,/.vscode,/.idea,/node_modules,/vendor,/.svn,/.hg,/server-status,/server-info,/.DS_Store,/Thumbs.db,/web.config,/crossdomain.xml,/clientaccesspolicy.xml,/elmah.axd,/trace.axd")
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
         })
     }
 
