@@ -1,6 +1,6 @@
 [package]
 name = "mavewaf"
-version = "0.2.1"
+version = "0.2.11"
 edition = "2024"
 description = "High-performance reverse proxy and WAF for hidden services"
 repository = "https://git.mrmave.work/maverick/mavewaf"
