@@ -96,8 +96,9 @@ pub fn generate_session_id() -> String {
 }
 
 #[must_use]
-pub fn format_set_cookie(name: &str, value: &str, max_age: u64) -> String {
-    format!("{name}={value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age={max_age}")
+pub fn format_set_cookie(name: &str, value: &str, max_age: u64, secure: bool) -> String {
+    let secure_flag = if secure { "; Secure" } else { "" };
+    format!("{name}={value}; HttpOnly{secure_flag}; SameSite=Strict; Path=/; Max-Age={max_age}")
 }
 
 pub const SESSION_COOKIE_NAME: &str = "mave_session";

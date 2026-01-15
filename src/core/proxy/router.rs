@@ -170,7 +170,11 @@ impl WafRouter {
             reset_session.queue_started_at = now;
             reset_session.last_active_at = now;
             let cookie_val = self.cookie_crypto.encrypt(&reset_session.to_bytes());
-            let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
+            let secure = !sess
+                .circuit_id
+                .as_deref()
+                .is_some_and(|cid| cid.starts_with("i2p:"));
+            let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300, secure);
 
             return self
                 .handler
@@ -194,7 +198,11 @@ impl WafRouter {
             new_session.captcha_gen_count = 1;
             new_session.last_active_at = now;
             let cookie_val = self.cookie_crypto.encrypt(&new_session.to_bytes());
-            let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
+            let secure = !sess
+                .circuit_id
+                .as_deref()
+                .is_some_and(|cid| cid.starts_with("i2p:"));
+            let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300, secure);
 
             return self
                 .handler
@@ -206,7 +214,11 @@ impl WafRouter {
         let mut updated_session = sess.clone();
         updated_session.last_active_at = now;
         let cookie_val = self.cookie_crypto.encrypt(&updated_session.to_bytes());
-        let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300);
+        let secure = !sess
+            .circuit_id
+            .as_deref()
+            .is_some_and(|cid| cid.starts_with("i2p:"));
+        let cookie_header = format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, 300, secure);
 
         self.handler
             .serve_queue_page_with_time_and_cookie(

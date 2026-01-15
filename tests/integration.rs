@@ -1130,3 +1130,322 @@ async fn test_queue_bypass_protection() {
     let text_valid = resp_valid.text().await.unwrap();
     assert!(text_valid.contains("Security Check") || text_valid.contains("CAPTCHA"));
 }
+
+#[tokio::test]
+async fn test_queue_spam_punishment() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let crypto = CookieCrypto::new(&config.session_secret);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let session = EncryptedSession {
+        session_id: "test_queue_spam_unique".to_string(),
+        verified: false,
+        verified_at: 0,
+        created_at: now,
+        queue_started_at: now - 3,
+        queue_completed: false,
+        last_active_at: now,
+        ..Default::default()
+    };
+
+    let cookie_val = crypto.encrypt(&session.to_bytes());
+    let cookie = format!("{SESSION_COOKIE_NAME}={cookie_val}");
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/target"))
+        .header("X-Circuit-Id", "test_spam_unique")
+        .header("Cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+
+    let cookie_header_val = resp
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let text = resp.text().await.unwrap();
+    assert!(text.contains("Wait Time"));
+
+    let resp_spam = client
+        .get(format!("http://127.0.0.1:{proxy_port}/target"))
+        .header("X-Circuit-Id", "test_spam_unique")
+        .header("Cookie", cookie_header_val)
+        .send()
+        .await
+        .unwrap();
+
+    let new_cookie_header = resp_spam
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let cookie_val = new_cookie_header
+        .split(';')
+        .next()
+        .unwrap()
+        .split('=')
+        .nth(1)
+        .unwrap();
+    let decrypted =
+        EncryptedSession::from_bytes(&crypto.decrypt(cookie_val).unwrap(), 3600).unwrap();
+
+    assert!(
+        decrypted.queue_started_at > now
+            || decrypted.queue_started_at >= decrypted.last_active_at - 1
+    );
+}
+
+#[tokio::test]
+async fn test_queue_normal_progression() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let crypto = CookieCrypto::new(&config.session_secret);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let session = EncryptedSession {
+        session_id: "test_queue_normal_unique".to_string(),
+        verified: false,
+        verified_at: 0,
+        created_at: now - 3,
+        queue_started_at: now - 3,
+        queue_completed: false,
+        last_active_at: now - 3,
+        ..Default::default()
+    };
+
+    let cookie_val = crypto.encrypt(&session.to_bytes());
+    let cookie = format!("{SESSION_COOKIE_NAME}={cookie_val}");
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/target"))
+        .header("X-Circuit-Id", "test_normal_unique")
+        .header("Cookie", cookie)
+        .send()
+        .await
+        .unwrap();
+
+    let new_cookie_header = resp.headers().get("set-cookie").unwrap().to_str().unwrap();
+    let cookie_val = new_cookie_header
+        .split(';')
+        .next()
+        .unwrap()
+        .split('=')
+        .nth(1)
+        .unwrap();
+    let decrypted =
+        EncryptedSession::from_bytes(&crypto.decrypt(cookie_val).unwrap(), 3600).unwrap();
+
+    assert!(decrypted.queue_started_at < now - 1);
+}
+
+#[tokio::test]
+async fn test_redirect_after_access_verify() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    config.features.captcha_enabled = false;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let crypto = CookieCrypto::new(&config.session_secret);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let session = EncryptedSession {
+        session_id: "test_redir_access_unique".to_string(),
+        verified: false,
+        verified_at: 0,
+        created_at: now - 10,
+        queue_started_at: now - 10,
+        queue_completed: false,
+        last_active_at: now - 10,
+        ..Default::default()
+    };
+
+    let cookie_val = crypto.encrypt(&session.to_bytes());
+    let cookie = format!("{SESSION_COOKIE_NAME}={cookie_val}");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/target/path"))
+        .header("X-Circuit-Id", "test_redir_unique")
+        .header("Cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+
+    let text = resp.text().await.unwrap();
+    assert!(text.contains("Click to Enter"));
+
+    let captcha_mgr = CaptchaManager::new(&config);
+    let token = captcha_mgr.create_token(&session.session_id.to_uppercase());
+
+    let post_resp = client
+        .post(format!("http://127.0.0.1:{proxy_port}/target/path"))
+        .header("X-Circuit-Id", "test_redir_unique")
+        .header("Cookie", &cookie)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("cf-turnstile-response={token}"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(post_resp.status(), 303);
+    assert_eq!(post_resp.headers().get("location").unwrap(), "/target/path");
+}
+
+#[tokio::test]
+async fn test_redirect_after_captcha_verify() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    config.features.captcha_enabled = true;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let crypto = CookieCrypto::new(&config.session_secret);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let session = EncryptedSession {
+        session_id: "test_redir_captcha_unique".to_string(),
+        verified: false,
+        verified_at: 0,
+        created_at: now,
+        queue_started_at: now - 10,
+        queue_completed: true,
+        last_active_at: now - 10,
+        ..Default::default()
+    };
+
+    let cookie_val = crypto.encrypt(&session.to_bytes());
+    let cookie = format!("{SESSION_COOKIE_NAME}={cookie_val}");
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/target/path"))
+        .header("X-Circuit-Id", "test_redir_cap_unique")
+        .header("Cookie", &cookie)
+        .send()
+        .await
+        .unwrap();
+
+    let text = resp.text().await.unwrap();
+    assert!(text.contains("Security Check"));
+    assert!(!text.contains("Click to Enter"));
+
+    let captcha_mgr = CaptchaManager::new(&config);
+    let answer = "TESTANS";
+    let token = captcha_mgr.create_token(answer);
+
+    let post_resp = client
+        .post(format!("http://127.0.0.1:{proxy_port}/target/path"))
+        .header("X-Circuit-Id", "test_redir_cap_unique")
+        .header("Cookie", &cookie)
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("s={token}&solution={answer}"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(post_resp.status(), 303);
+    assert_eq!(post_resp.headers().get("location").unwrap(), "/target/path");
+}
+
+#[tokio::test]
+async fn test_i2p_cookie_flag() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("X-I2P-DestB64", "base64_dest_unique")
+        .send()
+        .await
+        .unwrap();
+
+    match resp.status() {
+        reqwest::StatusCode::OK => {
+            let cookie = resp.headers().get("Set-Cookie").unwrap().to_str().unwrap();
+            assert!(!cookie.contains("; Secure"));
+        }
+        status => {
+            let text = resp.text().await.unwrap_or_default();
+            panic!("Expected 200 OK, got {status}. Body: {text}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_tor_cookie_flag() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.waf_mode = WafMode::Defense;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config.clone()).await;
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+
+    let resp = client
+        .get(format!("http://127.0.0.1:{proxy_port}/"))
+        .header("X-Circuit-Id", "circuit_123_unique")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 200);
+    let cookie = resp.headers().get("Set-Cookie").unwrap().to_str().unwrap();
+    assert!(cookie.contains("; Secure"));
+}

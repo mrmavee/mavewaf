@@ -53,7 +53,11 @@ impl ChallengeHandler {
 
     fn create_session_cookie(&self, session: &EncryptedSession, max_age: u64) -> String {
         let cookie_val = self.cookie_crypto.encrypt(&session.to_bytes());
-        format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, max_age)
+        let secure = !session
+            .circuit_id
+            .as_deref()
+            .is_some_and(|cid| cid.starts_with("i2p:"));
+        format_set_cookie(SESSION_COOKIE_NAME, &cookie_val, max_age, secure)
     }
 
     /// Serves the queue page.
