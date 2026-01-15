@@ -65,37 +65,24 @@ impl WebhookNotifier {
     }
 
     async fn send_notification(client: &Client, url: &str, payload: &WebhookPayload) -> Result<()> {
-        let mut json_payload =
-            serde_json::to_value(payload).map_err(|e| WafError::Webhook(e.to_string()))?;
-
-        if let serde_json::Value::Object(ref mut map) = json_payload {
-            let priority = payload.severity;
-
-            let (tags, title) = match payload.event_type {
-                EventType::DefenseModeActivated => {
-                    (vec!["shield", "red_circle"], "Defense Mode Activated")
-                }
-                EventType::DefenseModeDeactivated => {
-                    (vec!["shield", "green_circle"], "Defense Mode Deactivated")
-                }
-                EventType::RateLimitExceeded => (vec!["snail", "warning"], "Rate Limit Exceeded"),
-                EventType::CircuitBlocked => (vec!["no_entry_sign", "tor"], "Circuit Blocked"),
-                EventType::CircuitKilled => (vec!["skull", "blade"], "Circuit Killed"),
-                EventType::HighErrorRate => {
-                    (vec!["chart_with_upwards_trend", "fire"], "High Error Rate")
-                }
-                EventType::WafBlock => (vec!["shield", "stop_sign"], "WAF Block"),
-            };
-
-            map.insert("priority".to_string(), serde_json::json!(priority));
-            map.insert("tags".to_string(), serde_json::json!(tags));
-            map.insert("title".to_string(), serde_json::json!(title));
-            map.insert("topic".to_string(), serde_json::json!("mavewaf_alerts"));
-        }
+        let (tags, title) = match payload.event_type {
+            EventType::DefenseModeActivated => ("shield,red_circle", "Defense Mode Activated"),
+            EventType::DefenseModeDeactivated => {
+                ("shield,green_circle", "Defense Mode Deactivated")
+            }
+            EventType::RateLimitExceeded => ("snail,warning", "Rate Limit Exceeded"),
+            EventType::CircuitBlocked => ("no_entry_sign,tor", "Circuit Blocked"),
+            EventType::CircuitKilled => ("skull,blade", "Circuit Killed"),
+            EventType::HighErrorRate => ("chart_with_upwards_trend,fire", "High Error Rate"),
+            EventType::WafBlock => ("shield,stop_sign", "WAF Block"),
+        };
 
         client
             .post(url)
-            .json(&json_payload)
+            .header("Title", title)
+            .header("Priority", payload.severity.to_string())
+            .header("Tags", tags)
+            .body(payload.message.clone())
             .send()
             .await
             .map_err(|e| WafError::Webhook(e.to_string()))?;
