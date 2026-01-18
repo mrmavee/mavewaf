@@ -343,7 +343,7 @@ impl DefenseMonitor {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        
+
         let last_check = self.last_score_check.load(Ordering::Relaxed);
         if now.saturating_sub(last_check) < 5 {
             return false;
