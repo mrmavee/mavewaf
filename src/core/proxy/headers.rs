@@ -40,25 +40,23 @@ pub fn inject_security_headers(
     };
 
     let csp = if csp_extra.is_empty() {
-        "default-src 'self'; \
+        "default-src * data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval' 'unsafe-dynamic'; \
          script-src 'self' 'unsafe-inline'; \
-         style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data:; \
-         font-src 'self'; \
-         frame-ancestors 'none'; \
-         form-action 'self'; \
-         base-uri 'self'"
+         connect-src * data: blob: 'unsafe-inline'; \
+         img-src * data: blob: 'unsafe-inline'; \
+         frame-src * data: blob: ; \
+         style-src * data: blob: 'unsafe-inline'; \
+         font-src * data: blob: 'unsafe-inline';"
             .to_string()
     } else {
         format!(
-            "default-src 'self' {csp_extra}; \
+            "default-src * data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval' 'unsafe-dynamic' {csp_extra}; \
              script-src 'self' 'unsafe-inline' {csp_extra}; \
-             style-src 'self' 'unsafe-inline' {csp_extra}; \
-             img-src 'self' data: {csp_extra}; \
-             font-src 'self' {csp_extra}; \
-             frame-ancestors 'none'; \
-             form-action 'self'; \
-             base-uri 'self'"
+             connect-src * data: blob: 'unsafe-inline' {csp_extra}; \
+             img-src * data: blob: 'unsafe-inline' {csp_extra}; \
+             frame-src * data: blob: {csp_extra}; \
+             style-src * data: blob: 'unsafe-inline' {csp_extra}; \
+             font-src * data: blob: 'unsafe-inline' {csp_extra};"
         )
     };
 
@@ -75,9 +73,6 @@ pub fn inject_security_headers(
 
     if config.coop_policy != "off" {
         upstream_response.insert_header("Cross-Origin-Opener-Policy", &config.coop_policy)?;
-    }
-    if config.features.coep_enabled {
-        upstream_response.insert_header("Cross-Origin-Embedder-Policy", "require-corp")?;
     }
     upstream_response.insert_header("Cross-Origin-Resource-Policy", "same-origin")?;
 

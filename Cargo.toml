@@ -8,6 +8,9 @@ license = "AGPL-3.0-only"
 keywords = ["tor", "i2p", "waf", "reverse-proxy", "captcha", "hidden-service"]
 categories = ["network-programming", "web-programming::http-server"]
 
+[features]
+default = []
+testing = []
 
 [lib]
 name = "mavewaf"

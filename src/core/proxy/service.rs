@@ -100,16 +100,41 @@ impl MaveProxy {
     }
 
     async fn check_global_defense(&self) {
+        if self.defense_monitor.enable_auto_defense() {
+            let msg = "Defense mode activated due to high attack score".to_string();
+            warn!(action = "DEFENSE_ACTIVATED", "{msg}");
+            self.webhook.notify(WebhookPayload {
+                event_type: EventType::DefenseModeActivated,
+                timestamp: i64::try_from(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                )
+                .unwrap_or(0),
+                circuit_id: None,
+                severity: 3,
+                message: msg,
+            });
+        }
+
         if let Some(tor) = &self.tor_control {
             if let Some(effort) = self.defense_monitor.should_enable_pow() {
                 match tor.enable_pow("mavewaf-service", effort).await {
                     Ok(()) => {
                         self.defense_monitor.mark_pow_enabled();
-                        let msg = format!("Tor PoW enabled (effort: {effort}) due to high attack score");
+                        let msg =
+                            format!("Tor PoW enabled (effort: {effort}) due to high attack score");
                         warn!(action = "DEFENSE_ESCALATION", "{msg}");
                         self.webhook.notify(WebhookPayload {
                             event_type: EventType::DefenseModeActivated,
-                            timestamp: i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0),
+                            timestamp: i64::try_from(
+                                SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                            )
+                            .unwrap_or(0),
                             circuit_id: None,
                             severity: 4,
                             message: msg,
@@ -125,7 +150,13 @@ impl MaveProxy {
                         info!(action = "DEFENSE_DEESCALATION", "{msg}");
                         self.webhook.notify(WebhookPayload {
                             event_type: EventType::DefenseModeDeactivated,
-                            timestamp: i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0),
+                            timestamp: i64::try_from(
+                                SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                            )
+                            .unwrap_or(0),
                             circuit_id: None,
                             severity: 2,
                             message: msg,
@@ -297,7 +328,7 @@ impl MaveProxy {
         if let Some(ref circuit) = ctx.circuit_id {
             debug!(circuit_id = %circuit, "Request from Tor circuit");
             self.defense_monitor.record_request(Some(circuit), false);
-            
+
             if ctx.session_data.is_none() {
                 self.defense_monitor.record_unverified_request();
             }
