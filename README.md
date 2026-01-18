@@ -184,9 +184,14 @@ cosign verify --key cosign.pub mrmave/mavewaf:latest
 wget https://git.mrmave.work/maverick/mavewaf/releases/download/vX.X.X/mavewaf-vX.X.X-linux-amd64
 wget https://git.mrmave.work/maverick/mavewaf/releases/download/vX.X.X/mavewaf-vX.X.X-linux-amd64.sha256
 wget https://git.mrmave.work/maverick/mavewaf/releases/download/vX.X.X/mavewaf-vX.X.X-linux-amd64.asc
-wget https://git.mrmave.work/maverick/mavewaf/raw/branch/master/maverick.asc
 
+# Verify using WKD (Web Key Directory)
+gpg --locate-keys mail@mrmave.work
+
+# Or import manually
+wget https://git.mrmave.work/maverick/mavewaf/raw/branch/master/maverick.asc
 gpg --import maverick.asc
+
 sha256sum -c mavewaf-vX.X.X-linux-amd64.sha256
 gpg --verify mavewaf-vX.X.X-linux-amd64.asc mavewaf-vX.X.X-linux-amd64
 ```

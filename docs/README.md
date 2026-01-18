@@ -122,6 +122,16 @@ If `LOGO_PATH` is omitted or invalid, MaveWAF falls back to the built-in secure 
 |:---|:---|:---|
 | `WEBHOOK_ENABLED` | Enable security alert webhooks | `false` |
 | `WEBHOOK_URL` | Destination URL for JSON payloads | - |
+| `WEBHOOK_TOKEN` | Bearer token for authentication | - |
+
+---
+
+### Honeypot
+
+| Variable | Description | Default |
+|:---|:---|:---|
+| `HONEYPOT_PATHS` | Comma-separated paths that trigger circuit kill | `/.env,/.git,...` |
+| `KARMA_THRESHOLD` | Penalty points before circuit termination | `50` |
 
 ---
 
