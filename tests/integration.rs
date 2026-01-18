@@ -82,6 +82,13 @@ fn create_test_config(backend_port: u16) -> Arc<Config> {
         honeypot_paths: std::collections::HashSet::new(),
         karma_threshold: 50,
         webhook_token: None,
+        attack_churn_threshold: 30,
+        attack_rps_threshold: 30,
+        attack_rpc_threshold: 5,
+        attack_defense_score: 2.0,
+        attack_pow_score: 4.0,
+        attack_pow_effort: 5,
+        attack_recovery_secs: 300,
     })
 }
 
@@ -1529,4 +1536,35 @@ async fn test_karma_enforcement() {
         .unwrap();
 
     assert_eq!(blocked_resp.status(), 403);
+}
+
+#[tokio::test]
+async fn test_dynamic_defense_logic() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_churn_threshold = 10;
+    config.attack_rps_threshold = 1000;
+    config.attack_rpc_threshold = 5;
+    config.attack_defense_score = 4.0;
+    config.attack_pow_score = 5.0;
+
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..20 {
+        let cid = format!("scanner_circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+        monitor.record_unverified_request();
+    }
+
+    let score = monitor.calculate_attack_score();
+    assert!(score > 4.5);
+
+    assert!(monitor.should_auto_defense());
+    assert!(monitor.should_enable_pow().is_some());
+
+    monitor.mark_pow_enabled();
+    assert!(monitor.is_pow_enabled());
+    assert!(monitor.should_enable_pow().is_none());
+
+    assert!(!monitor.should_disable_pow());
 }

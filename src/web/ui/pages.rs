@@ -340,6 +340,13 @@ mod tests {
             honeypot_paths: std::collections::HashSet::new(),
             karma_threshold: 50,
             webhook_token: None,
+            attack_churn_threshold: 30,
+            attack_rps_threshold: 30,
+            attack_rpc_threshold: 5,
+            attack_defense_score: 2.0,
+            attack_pow_score: 4.0,
+            attack_pow_effort: 5,
+            attack_recovery_secs: 300,
         }
     }
 

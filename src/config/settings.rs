@@ -52,6 +52,13 @@ fn get_env_f64(key: &str) -> f64 {
         .unwrap_or_else(|_| panic!("{key} must be a valid f64"))
 }
 
+fn get_env_f64_or(key: &str, default: f64) -> f64 {
+    env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+}
+
 fn get_env_u64_or(key: &str, default: u64) -> u64 {
     env::var(key)
         .ok()
@@ -189,6 +196,20 @@ pub struct Config {
     pub honeypot_paths: HashSet<String>,
     /// Karma threshold for circuit termination (default 50).
     pub karma_threshold: u32,
+    /// Circuit churn threshold (circuits/min) for attack detection.
+    pub attack_churn_threshold: u32,
+    /// Request rate threshold (req/sec) for attack detection.
+    pub attack_rps_threshold: u32,
+    /// Requests per circuit threshold (below = suspicious).
+    pub attack_rpc_threshold: u32,
+    /// Attack score to auto-enable defense mode.
+    pub attack_defense_score: f64,
+    /// Attack score to enable Tor `PoW` (low effort).
+    pub attack_pow_score: f64,
+    /// Tor `PoW` effort when attack detected.
+    pub attack_pow_effort: u32,
+    /// Seconds of low score before auto-recovery.
+    pub attack_recovery_secs: u64,
 }
 
 impl Config {
@@ -299,6 +320,13 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
             karma_threshold: get_env_u32_or("KARMA_THRESHOLD", 50),
+            attack_churn_threshold: get_env_u32_or("ATTACK_CHURN_THRESHOLD", 30),
+            attack_rps_threshold: get_env_u32_or("ATTACK_RPS_THRESHOLD", 30),
+            attack_rpc_threshold: get_env_u32_or("ATTACK_RPC_THRESHOLD", 5),
+            attack_defense_score: get_env_f64_or("ATTACK_DEFENSE_SCORE", 2.0),
+            attack_pow_score: get_env_f64_or("ATTACK_POW_SCORE", 4.0),
+            attack_pow_effort: get_env_u32_or("ATTACK_POW_EFFORT", 5),
+            attack_recovery_secs: get_env_u64_or("ATTACK_RECOVERY_SECS", 300),
         })
     }
 

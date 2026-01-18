@@ -94,6 +94,46 @@ impl MaveProxy {
             && let Err(e) = tor.kill_circuit(cid).await
         {
             warn!(circuit_id = %cid, error = %e, "Failed to kill circuit");
+        } else if circuit_id.is_some() {
+            self.defense_monitor.record_circuit_kill();
+        }
+    }
+
+    async fn check_global_defense(&self) {
+        if let Some(tor) = &self.tor_control {
+            if let Some(effort) = self.defense_monitor.should_enable_pow() {
+                match tor.enable_pow("mavewaf-service", effort).await {
+                    Ok(()) => {
+                        self.defense_monitor.mark_pow_enabled();
+                        let msg = format!("Tor PoW enabled (effort: {effort}) due to high attack score");
+                        warn!(action = "DEFENSE_ESCALATION", "{msg}");
+                        self.webhook.notify(WebhookPayload {
+                            event_type: EventType::DefenseModeActivated,
+                            timestamp: i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0),
+                            circuit_id: None,
+                            severity: 4,
+                            message: msg,
+                        });
+                    }
+                    Err(e) => warn!(error = %e, "Failed to enable Tor PoW"),
+                }
+            } else if self.defense_monitor.should_disable_pow() {
+                match tor.disable_pow().await {
+                    Ok(()) => {
+                        self.defense_monitor.mark_pow_disabled();
+                        let msg = "Tor PoW disabled - attack subsided".to_string();
+                        info!(action = "DEFENSE_DEESCALATION", "{msg}");
+                        self.webhook.notify(WebhookPayload {
+                            event_type: EventType::DefenseModeDeactivated,
+                            timestamp: i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs()).unwrap_or(0),
+                            circuit_id: None,
+                            severity: 2,
+                            message: msg,
+                        });
+                    }
+                    Err(e) => warn!(error = %e, "Failed to disable Tor PoW"),
+                }
+            }
         }
     }
 
@@ -257,6 +297,10 @@ impl MaveProxy {
         if let Some(ref circuit) = ctx.circuit_id {
             debug!(circuit_id = %circuit, "Request from Tor circuit");
             self.defense_monitor.record_request(Some(circuit), false);
+            
+            if ctx.session_data.is_none() {
+                self.defense_monitor.record_unverified_request();
+            }
 
             if self.defense_monitor.check_circuit_flood(circuit) {
                 info!(circuit_id = %circuit, action = "KILL", "Circuit flood detected");
@@ -402,6 +446,8 @@ impl ProxyHttp for MaveProxy {
                 return Ok(true);
             }
         }
+
+        self.check_global_defense().await;
 
         ctx.circuit_id = Self::extract_circuit_id(session);
         self.extract_session(session, ctx);
@@ -692,6 +738,13 @@ mod tests {
             honeypot_paths: std::collections::HashSet::new(),
             karma_threshold: 50,
             webhook_token: None,
+            attack_churn_threshold: 30,
+            attack_rps_threshold: 30,
+            attack_rpc_threshold: 5,
+            attack_defense_score: 2.0,
+            attack_pow_score: 4.0,
+            attack_pow_effort: 5,
+            attack_recovery_secs: 300,
         })
     }
 
