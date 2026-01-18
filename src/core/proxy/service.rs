@@ -292,7 +292,7 @@ impl MaveProxy {
             return Ok(false);
         }
 
-        info!(path = %path, circuit_id = ?ctx.circuit_id, action = "HONEYPOT", "Honeypot trap triggered");
+        info!(path = %path, circuit_id = ?ctx.circuit_id, action = "KILL", "Honeypot trap triggered");
         self.kill_circuit_if_possible(ctx.circuit_id.as_deref())
             .await;
 
@@ -317,34 +317,6 @@ impl MaveProxy {
             Some(&self.config),
         );
         serve_html(session, &self.config, 403, html, None).await
-    }
-
-    async fn send_early_hints(&self, session: &mut Session) -> Result<()> {
-        if self.config.early_hints_links.is_empty() {
-            return Ok(());
-        }
-
-        let mut header = ResponseHeader::build(103, None)?;
-        for link in &self.config.early_hints_links {
-            let ext = std::path::Path::new(link)
-                .extension()
-                .and_then(|e| e.to_str())
-                .map(str::to_ascii_lowercase);
-
-            let as_type = match ext.as_deref() {
-                Some("css") => "style",
-                Some("js" | "mjs") => "script",
-                Some("woff" | "woff2" | "ttf" | "otf" | "eot") => "font",
-                Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "svg") => "image",
-                _ => "fetch",
-            };
-            header.append_header("Link", format!("<{link}>; rel=preload; as={as_type}"))?;
-        }
-
-        session
-            .write_response_header(Box::new(header), false)
-            .await?;
-        Ok(())
     }
 
     async fn handle_karma_block(&self, session: &mut Session, ctx: &RequestCtx) -> Result<bool> {
@@ -509,10 +481,6 @@ impl ProxyHttp for MaveProxy {
                     .serve_queue_page(session, ctx, &uri, now)
                     .await;
             }
-        }
-
-        if !is_static {
-            self.send_early_hints(session).await?;
         }
 
         self.handle_waf_and_router(session, ctx).await
@@ -723,7 +691,7 @@ mod tests {
             coop_policy: "same-origin-allow-popups".to_string(),
             honeypot_paths: std::collections::HashSet::new(),
             karma_threshold: 50,
-            early_hints_links: Vec::new(),
+            webhook_token: None,
         })
     }
 

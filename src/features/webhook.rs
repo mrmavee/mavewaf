@@ -31,14 +31,13 @@ pub struct WebhookPayload {
     pub message: String,
 }
 
-/// Webhook notification client.
 pub struct WebhookNotifier {
     client: Client,
     webhook_url: Option<String>,
+    webhook_token: Option<String>,
 }
 
 impl WebhookNotifier {
-    /// Creates a new webhook notifier.
     #[must_use]
     pub fn new(config: &Arc<Config>) -> Self {
         Self {
@@ -47,24 +46,31 @@ impl WebhookNotifier {
                 .build()
                 .unwrap_or_default(),
             webhook_url: config.webhook_url.clone(),
+            webhook_token: config.webhook_token.clone(),
         }
     }
 
-    /// Sends a notification asynchronously without blocking.
     pub fn notify(&self, payload: WebhookPayload) {
         let Some(url) = self.webhook_url.clone() else {
             return;
         };
 
         let client = self.client.clone();
+        let token = self.webhook_token.clone();
         tokio::spawn(async move {
-            if let Err(e) = Self::send_notification(&client, &url, &payload).await {
+            if let Err(e) = Self::send_notification(&client, &url, token.as_deref(), &payload).await
+            {
                 error!(error = %e, "Webhook notification failed");
             }
         });
     }
 
-    async fn send_notification(client: &Client, url: &str, payload: &WebhookPayload) -> Result<()> {
+    async fn send_notification(
+        client: &Client,
+        url: &str,
+        token: Option<&str>,
+        payload: &WebhookPayload,
+    ) -> Result<()> {
         let (tags, title) = match payload.event_type {
             EventType::DefenseModeActivated => ("shield,red_circle", "Defense Mode Activated"),
             EventType::DefenseModeDeactivated => {
@@ -77,13 +83,18 @@ impl WebhookNotifier {
             EventType::WafBlock => ("shield,stop_sign", "WAF Block"),
         };
 
-        client
+        let mut req = client
             .post(url)
             .header("Title", title)
             .header("Priority", payload.severity.to_string())
             .header("Tags", tags)
-            .body(payload.message.clone())
-            .send()
+            .body(payload.message.clone());
+
+        if let Some(t) = token {
+            req = req.header("Authorization", format!("Bearer {t}"));
+        }
+
+        req.send()
             .await
             .map_err(|e| WafError::Webhook(e.to_string()))?;
 
@@ -141,7 +152,7 @@ mod tests {
             coop_policy: "same-origin-allow-popups".to_string(),
             honeypot_paths: std::collections::HashSet::new(),
             karma_threshold: 50,
-            early_hints_links: Vec::new(),
+            webhook_token: None,
         })
     }
 

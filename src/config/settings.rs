@@ -155,6 +155,8 @@ pub struct Config {
     pub defense_cooldown_secs: u64,
     /// Webhook URL for security notifications.
     pub webhook_url: Option<String>,
+    /// Bearer token for webhook authentication.
+    pub webhook_token: Option<String>,
     /// Maximum captcha failures before redirect to queue.
     pub max_captcha_failures: u8,
     /// Maximum captcha generations allowed per session (anti-spam).
@@ -187,8 +189,6 @@ pub struct Config {
     pub honeypot_paths: HashSet<String>,
     /// Karma threshold for circuit termination (default 50).
     pub karma_threshold: u32,
-    /// Preload links for HTTP 103 Early Hints (comma-separated paths).
-    pub early_hints_links: Vec<String>,
 }
 
 impl Config {
@@ -274,6 +274,7 @@ impl Config {
             defense_circuit_flood_threshold,
             defense_cooldown_secs,
             webhook_url,
+            webhook_token: env::var("WEBHOOK_TOKEN").ok().filter(|s| !s.is_empty()),
             max_captcha_failures: get_env_u8_or("MAX_CAPTCHA_FAILURES", 3),
             captcha_gen_limit: get_env_u8_or("CAPTCHA_GEN_LIMIT", 5),
             ssrf_allowed_hosts: get_env_or("SSRF_ALLOWED_HOSTS", "")
@@ -298,11 +299,6 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
             karma_threshold: get_env_u32_or("KARMA_THRESHOLD", 50),
-            early_hints_links: get_env_or("EARLY_HINTS_LINKS", "")
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect(),
         })
     }
 

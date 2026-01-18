@@ -81,7 +81,7 @@ fn create_test_config(backend_port: u16) -> Arc<Config> {
         coop_policy: "same-origin-allow-popups".to_string(),
         honeypot_paths: std::collections::HashSet::new(),
         karma_threshold: 50,
-        early_hints_links: Vec::new(),
+        webhook_token: None,
     })
 }
 
@@ -1529,22 +1529,4 @@ async fn test_karma_enforcement() {
         .unwrap();
 
     assert_eq!(blocked_resp.status(), 403);
-}
-
-#[tokio::test]
-async fn test_early_hints() {
-    let backend_port = spawn_mock_backend().await;
-    let mut config = (*create_test_config(backend_port)).clone();
-    config.early_hints_links = vec!["/css/style.css".to_string(), "/js/app.js".to_string()];
-    let config = Arc::new(config);
-    let (proxy_port, _) = spawn_proxy(config.clone()).await;
-
-    let resp = reqwest::Client::new()
-        .get(format!("http://127.0.0.1:{proxy_port}/"))
-        .header("X-Circuit-Id", "early_hints_test")
-        .send()
-        .await
-        .unwrap();
-
-    assert_eq!(resp.status(), 200);
 }
