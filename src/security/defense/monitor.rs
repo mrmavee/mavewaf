@@ -86,7 +86,21 @@ impl DefenseMonitor {
         self.check_thresholds();
     }
 
-    fn check_thresholds(&self) {
+    pub fn is_circuit_blocked(&self, circuit_id: &str) -> bool {
+        let karma_map = self.circuit_karma.pin();
+        if let Some(karma) = karma_map.get(circuit_id) {
+            let score = karma.load(Ordering::Relaxed);
+            return score >= self.config.karma_threshold;
+        }
+        false
+    }
+
+    /// Checks if defense thresholds have been exceeded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the `last_reset` mutex is poisoned.
+    pub fn check_thresholds(&self) {
         let now_epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -132,6 +146,7 @@ impl DefenseMonitor {
         self.error_count.store(0, Ordering::Relaxed);
         self.request_count.store(0, Ordering::Relaxed);
         self.circuit_counts.pin().clear();
+        self.circuit_karma.pin().clear();
         self.last_reset_epoch.store(now_epoch, Ordering::Relaxed);
         *last_reset = Instant::now();
     }
@@ -583,5 +598,25 @@ mod tests {
 
         monitor.add_karma("circuit_1", 20);
         assert!(monitor.check_karma_threshold("circuit_1"));
+    }
+    #[test]
+    fn test_karma_cleanup() {
+        let config = create_test_config();
+        let monitor = DefenseMonitor::new(config);
+
+        monitor.add_karma("circuit_dirty", 100);
+        assert_eq!(monitor.get_karma("circuit_dirty"), 100);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        monitor.last_reset_epoch.store(now - 65, Ordering::Relaxed);
+        *monitor.last_reset.lock().unwrap() =
+            Instant::now().checked_sub(Duration::from_secs(65)).unwrap();
+
+        monitor.check_thresholds();
+
+        assert_eq!(monitor.get_karma("circuit_dirty"), 0);
     }
 }
