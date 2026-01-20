@@ -1,4 +1,4 @@
-use mavewaf::config::{CaptchaStyle, Config, FeatureFlags, WafMode};
+use mavewaf::config::Config;
 use mavewaf::core::middleware::RateLimiter;
 use mavewaf::core::proxy::MaveProxy;
 use mavewaf::features::webhook::WebhookNotifier;
@@ -33,59 +33,13 @@ pub async fn spawn_mock_backend() -> u16 {
 }
 
 pub fn create_test_config(backend_port: u16) -> Arc<Config> {
-    Arc::new(Config {
-        listen_addr: "127.0.0.1:0".parse().unwrap(),
-        internal_addr: "127.0.0.1:0".parse().unwrap(),
-        backend_url: format!("http://127.0.0.1:{backend_port}"),
-        waf_mode: WafMode::Normal,
-        rate_limit_rps: 100,
-        rate_limit_burst: 100,
-        features: FeatureFlags {
-            captcha_enabled: true,
-            webhook_enabled: false,
-            waf_body_scan_enabled: true,
-            coep_enabled: false,
-        },
-        captcha_secret: "secret".to_string(),
-        captcha_ttl: 300,
-        captcha_difficulty: "easy".to_string(),
-        captcha_style: CaptchaStyle::Simple,
-        session_secret: "0000000000000000000000000000000000000000000000000000000000000000"
-            .to_string(),
-        session_expiry_secs: 3600,
-        tor_circuit_prefix: "fc00".to_string(),
-        tor_control_addr: None,
-        tor_control_password: None,
-        torrc_path: None,
-        defense_error_rate_threshold: 0.5,
-        defense_circuit_flood_threshold: 10,
-        defense_cooldown_secs: 300,
-        webhook_url: None,
-        max_captcha_failures: 3,
-        captcha_gen_limit: 5,
-        ssrf_allowed_hosts: vec!["127.0.0.1".to_string()],
-        waf_body_scan_max_size: 1024,
-        rate_limit_session_rps: 10,
-        rate_limit_session_burst: 20,
-        app_name: "TestApp".to_string(),
-        favicon_base64: String::new(),
-        meta_title: "Test".to_string(),
-        meta_description: "Test".to_string(),
-        meta_keywords: "Test".to_string(),
-        log_format: "pretty".to_string(),
-        csp_extra_sources: String::new(),
-        coop_policy: "same-origin-allow-popups".to_string(),
-        honeypot_paths: std::collections::HashSet::new(),
-        karma_threshold: 50,
-        webhook_token: None,
-        attack_churn_threshold: 30,
-        attack_rps_threshold: 30,
-        attack_rpc_threshold: 5,
-        attack_defense_score: 2.0,
-        attack_pow_score: 4.0,
-        attack_pow_effort: 5,
-        attack_recovery_secs: 300,
-    })
+    let mut config = (*mavewaf::test_utils::create_test_config()).clone();
+    config.listen_addr = "127.0.0.1:0".parse().unwrap();
+    config.internal_addr = "127.0.0.1:0".parse().unwrap();
+    config.backend_url = format!("http://127.0.0.1:{backend_port}");
+    config.features.waf_body_scan_enabled = true;
+    config.ssrf_allowed_hosts = vec!["127.0.0.1".to_string()];
+    Arc::new(config)
 }
 
 pub async fn spawn_proxy(config: Arc<Config>) -> (u16, std::thread::JoinHandle<()>) {

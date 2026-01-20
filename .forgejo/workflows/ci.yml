@@ -38,7 +38,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Tests
-        run: cargo llvm-cov --json --output-path coverage.json
+        run: cargo llvm-cov --all-features --json --output-path coverage.json
 
       - name: Generate Badge
         run: |
@@ -57,7 +57,7 @@ jobs:
           retention-days: 1
 
       - name: Run Clippy
-        run: cargo clippy -- -W clippy::pedantic -W clippy::nursery -D warnings
+        run: cargo clippy --all-features --all-targets -- -W clippy::pedantic -W clippy::nursery -D warnings
 
   badge:
     name: Update Badge

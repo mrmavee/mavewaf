@@ -1828,7 +1828,7 @@ dependencies = [
 
 [[package]]
 name = "mavewaf"
-version = "0.2.14"
+version = "0.2.15"
 dependencies = [
  "ab_glyph",
  "aes-gcm",
@@ -1842,6 +1842,7 @@ dependencies = [
  "dotenvy",
  "hmac",
  "http-body-util",
+ "httparse",
  "hyper",
  "hyper-util",
  "image",
@@ -1859,6 +1860,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "socket2",
  "thiserror 2.0.17",
  "tokio",
  "tracing",

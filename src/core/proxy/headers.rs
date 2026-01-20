@@ -27,6 +27,8 @@ pub fn inject_security_headers(
     upstream_response.remove_header("Warning");
     upstream_response.remove_header("Feature-Policy");
     upstream_response.remove_header("Public-Key-Pins");
+    upstream_response.insert_header("Server", "CERN-httpd/3.0 (Mave)")?;
+    upstream_response.insert_header("X-Powered-By", "you-shall-not-pass")?;
 
     upstream_response.insert_header(
         "Strict-Transport-Security",
@@ -40,25 +42,23 @@ pub fn inject_security_headers(
     };
 
     let csp = if csp_extra.is_empty() {
-        "default-src 'self'; \
+        "default-src * data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval' 'unsafe-dynamic'; \
          script-src 'self' 'unsafe-inline'; \
-         style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data:; \
-         font-src 'self'; \
-         frame-ancestors 'none'; \
-         form-action 'self'; \
-         base-uri 'self'"
+         connect-src * data: blob: 'unsafe-inline'; \
+         img-src * data: blob: 'unsafe-inline'; \
+         frame-src * data: blob: ; \
+         style-src * data: blob: 'unsafe-inline'; \
+         font-src * data: blob: 'unsafe-inline';"
             .to_string()
     } else {
         format!(
-            "default-src 'self' {csp_extra}; \
+            "default-src * data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval' 'unsafe-dynamic' {csp_extra}; \
              script-src 'self' 'unsafe-inline' {csp_extra}; \
-             style-src 'self' 'unsafe-inline' {csp_extra}; \
-             img-src 'self' data: {csp_extra}; \
-             font-src 'self' {csp_extra}; \
-             frame-ancestors 'none'; \
-             form-action 'self'; \
-             base-uri 'self'"
+             connect-src * data: blob: 'unsafe-inline' {csp_extra}; \
+             img-src * data: blob: 'unsafe-inline' {csp_extra}; \
+             frame-src * data: blob: {csp_extra}; \
+             style-src * data: blob: 'unsafe-inline' {csp_extra}; \
+             font-src * data: blob: 'unsafe-inline' {csp_extra};"
         )
     };
 
@@ -76,10 +76,36 @@ pub fn inject_security_headers(
     if config.coop_policy != "off" {
         upstream_response.insert_header("Cross-Origin-Opener-Policy", &config.coop_policy)?;
     }
-    if config.features.coep_enabled {
-        upstream_response.insert_header("Cross-Origin-Embedder-Policy", "require-corp")?;
-    }
     upstream_response.insert_header("Cross-Origin-Resource-Policy", "same-origin")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_header_injection() {
+        let config = crate::test_utils::create_test_config();
+        let mut header = ResponseHeader::build(200, None).unwrap();
+        header.insert_header("Server", "OldServer").unwrap();
+        header.insert_header("X-Powered-By", "OldPower").unwrap();
+
+        inject_security_headers(&mut header, &config).unwrap();
+
+        assert_eq!(
+            header.headers.get("Server").unwrap().to_str().unwrap(),
+            "CERN-httpd/3.0 (Mave)"
+        );
+        assert_eq!(
+            header
+                .headers
+                .get("X-Powered-By")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "you-shall-not-pass"
+        );
+        assert!(header.headers.get("Strict-Transport-Security").is_some());
+    }
 }

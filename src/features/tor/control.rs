@@ -48,25 +48,110 @@ impl TorControl {
         }
     }
 
-    /// Enables Proof-of-Work defense on the hidden service.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if Tor control connection or authentication fails.
-    pub async fn enable_pow(&self, onion_addr: &str, effort: u32) -> Result<(), String> {
+    async fn get_info_config_text(&self) -> Result<Vec<String>, String> {
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| e.to_string())?;
         self.authenticate(&mut stream).await?;
 
-        let cmd = format!(
-            "SETCONF HiddenServiceEnableIntroDoSDefense=1 HiddenServicePoWDefensesEnabled=1 HiddenServicePoWQueueRate={} HiddenServicePoWQueueBurst={}\r\n",
-            effort,
-            effort * 2
-        );
-
+        let cmd = "GETINFO config-text\r\n";
         stream
             .write_all(cmd.as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        stream.flush().await.map_err(|e| e.to_string())?;
+
+        let mut reader = BufReader::new(stream);
+        let mut lines = Vec::new();
+        let mut in_config = false;
+
+        loop {
+            let mut line = String::new();
+            let bytes = reader
+                .read_line(&mut line)
+                .await
+                .map_err(|e| e.to_string())?;
+            if bytes == 0 {
+                break;
+            }
+
+            if line.starts_with("250+config-text=") {
+                in_config = true;
+                continue;
+            } else if line.trim() == "." || (line.starts_with("250 OK") && !in_config) {
+                break;
+            }
+
+            if in_config {
+                let trimmed = line.trim().to_string();
+                if !trimmed.is_empty() {
+                    lines.push(trimmed);
+                }
+            }
+        }
+        Ok(lines)
+    }
+
+    /// Enables Proof-of-Work defense on ALL configured hidden services.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Tor control connection or authentication fails.
+    pub async fn enable_pow(&self, _onion_addr: &str, effort: u32) -> Result<(), String> {
+        use std::fmt::Write;
+        let current_conf = self.get_info_config_text().await?;
+        let mut new_conf = String::from("+LOADCONF\r\n");
+        let mut current_block = String::new();
+        let mut is_hs_block = false;
+        let mut found_any_hs = false;
+
+        for line in current_conf {
+            if line.starts_with("HiddenServiceDir") {
+                if !current_block.is_empty() {
+                    new_conf.push_str(&current_block);
+                }
+
+                current_block.clear();
+                current_block.push_str(&line);
+                current_block.push_str("\r\n");
+                is_hs_block = true;
+                found_any_hs = true;
+
+                let _ = write!(
+                    current_block,
+                    "HiddenServiceEnableIntroDoSDefense 1\r\nHiddenServicePoWDefensesEnabled 1\r\nHiddenServicePoWQueueRate {}\r\nHiddenServicePoWQueueBurst {}\r\n",
+                    effort,
+                    effort * 2
+                );
+            } else {
+                if is_hs_block
+                    && (line.starts_with("HiddenServicePoW")
+                        || line.starts_with("HiddenServiceEnableIntroDoS"))
+                {
+                    continue;
+                }
+                current_block.push_str(&line);
+                current_block.push_str("\r\n");
+            }
+        }
+
+        if !current_block.is_empty() {
+            new_conf.push_str(&current_block);
+        }
+
+        if !found_any_hs {
+            return Err("No HiddenServiceDir found in config".to_string());
+        }
+
+        new_conf.push_str(".\r\n");
+
+        let mut stream = TcpStream::connect(self.addr)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.authenticate(&mut stream).await?;
+
+        stream
+            .write_all(new_conf.as_bytes())
             .await
             .map_err(|e| e.to_string())?;
         stream.flush().await.map_err(|e| e.to_string())?;
@@ -79,27 +164,68 @@ impl TorControl {
             .map_err(|e| e.to_string())?;
 
         if response.starts_with("250") {
-            info!(onion = %onion_addr, effort = effort, "Tor PoW enabled");
+            info!(
+                effort = effort,
+                "Tor PoW enabled for all services (LOADCONF)"
+            );
             Ok(())
         } else {
             Err(format!("PoW config failed: {response}"))
         }
     }
 
-    /// Disables Proof-of-Work defense.
+    /// Disables Proof-of-Work defense on ALL configured hidden services.
     ///
     /// # Errors
     ///
     /// Returns an error if Tor control command fails.
     pub async fn disable_pow(&self) -> Result<(), String> {
+        let current_conf = self.get_info_config_text().await?;
+        let mut new_conf = String::from("+LOADCONF\r\n");
+        let mut current_block = String::new();
+        let mut is_hs_block = false;
+        let mut found_any_hs = false;
+
+        for line in current_conf {
+            if line.starts_with("HiddenServiceDir") {
+                if !current_block.is_empty() {
+                    new_conf.push_str(&current_block);
+                }
+
+                current_block.clear();
+                current_block.push_str(&line);
+                current_block.push_str("\r\n");
+                is_hs_block = true;
+                found_any_hs = true;
+            } else {
+                if is_hs_block
+                    && (line.starts_with("HiddenServicePoW")
+                        || line.starts_with("HiddenServiceEnableIntroDoS"))
+                {
+                    continue;
+                }
+                current_block.push_str(&line);
+                current_block.push_str("\r\n");
+            }
+        }
+
+        if !current_block.is_empty() {
+            new_conf.push_str(&current_block);
+        }
+
+        if !found_any_hs {
+            return Err("No HiddenServiceDir found in config".to_string());
+        }
+
+        new_conf.push_str(".\r\n");
+
         let mut stream = TcpStream::connect(self.addr)
             .await
             .map_err(|e| e.to_string())?;
         self.authenticate(&mut stream).await?;
 
-        let cmd = "SETCONF HiddenServicePoWDefensesEnabled=0\r\n";
         stream
-            .write_all(cmd.as_bytes())
+            .write_all(new_conf.as_bytes())
             .await
             .map_err(|e| e.to_string())?;
         stream.flush().await.map_err(|e| e.to_string())?;
@@ -112,7 +238,7 @@ impl TorControl {
             .map_err(|e| e.to_string())?;
 
         if response.starts_with("250") {
-            info!("Tor PoW disabled");
+            info!("Tor PoW disabled for all services (LOADCONF)");
             Ok(())
         } else {
             Err(format!("PoW disable failed: {response}"))
@@ -166,8 +292,10 @@ impl TorControl {
 mod tests {
     use super::*;
     use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::Arc;
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
+    use tokio::sync::Mutex;
 
     #[test]
     fn test_tor_control_new() {
@@ -176,20 +304,50 @@ mod tests {
         assert!(control.password.is_some());
     }
 
-    async fn spawn_mock_tor(responses: Vec<&'static str>) -> SocketAddr {
+    async fn spawn_mock_tor(responses: Vec<String>) -> SocketAddr {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
+        let responses = Arc::new(Mutex::new(responses.into_iter()));
 
         tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = [0u8; 1024];
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let responses_clone = responses.clone();
 
-            let _ = socket.read(&mut buf).await.unwrap();
-            socket.write_all(b"250 OK\r\n").await.unwrap();
+                tokio::spawn(async move {
+                    let mut reader = BufReader::new(&mut socket);
+                    let mut line = String::new();
 
-            for resp in responses {
-                let _ = socket.read(&mut buf).await.unwrap();
-                socket.write_all(resp.as_bytes()).await.unwrap();
+                    if reader.read_line(&mut line).await.is_ok() {
+                        let _ = reader.get_mut().write_all(b"250 OK\r\n").await;
+                    }
+
+                    loop {
+                        line.clear();
+                        if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                            break;
+                        }
+
+                        let mut resp_guard = responses_clone.lock().await;
+
+                        if line.starts_with("GETINFO config-text") {
+                            if let Some(resp) = resp_guard.next() {
+                                let _ = reader.get_mut().write_all(resp.as_bytes()).await;
+                            } else {
+                                let _ = reader.get_mut().write_all(b"250+config-text=\r\nHiddenServiceDir /tmp/hs\r\nHiddenServicePort 80\r\n.\r\n250 OK\r\n").await;
+                            }
+                        } else if line.starts_with("+LOADCONF") || line.starts_with("CLOSECIRCUIT")
+                        {
+                            if let Some(resp) = resp_guard.next() {
+                                let _ = reader.get_mut().write_all(resp.as_bytes()).await;
+                            } else {
+                                let _ = reader.get_mut().write_all(b"250 OK\r\n").await;
+                            }
+                        }
+                    }
+                });
             }
         });
 
@@ -198,7 +356,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_enable_pow() {
-        let addr = spawn_mock_tor(vec!["250 OK\r\n"]).await;
+        let responses = vec![
+            "250+config-text=\r\nSocksPort 9050\r\nHiddenServiceDir /var/lib/tor/other_service/\r\nHiddenServicePort 80 127.0.0.1:8081\r\nHiddenServiceDir /var/lib/tor/hidden_service/test_service/\r\nHiddenServicePort 80 127.0.0.1:8080\r\n.\r\n250 OK\r\n".to_string(),
+            "250 OK\r\n".to_string(),
+        ];
+        let addr = spawn_mock_tor(responses).await;
         let control = TorControl::new(addr, Some("pass".into()));
 
         let res = control.enable_pow("onion.onion", 10).await;
@@ -207,7 +369,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_disable_pow() {
-        let addr = spawn_mock_tor(vec!["250 OK\r\n"]).await;
+        let responses = vec![
+            "250+config-text=\r\nSocksPort 9050\r\nHiddenServiceDir /var/lib/tor/other_service/\r\nHiddenServicePort 80 127.0.0.1:8081\r\nHiddenServiceDir /var/lib/tor/hidden_service/test_service/\r\nHiddenServicePort 80 127.0.0.1:8080\r\nHiddenServicePoWDefensesEnabled 1\r\n.\r\n250 OK\r\n".to_string(),
+            "250 OK\r\n".to_string(),
+        ];
+        let addr = spawn_mock_tor(responses).await;
         let control = TorControl::new(addr, Some("pass".into()));
 
         let res = control.disable_pow().await;
@@ -216,7 +382,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_kill_circuit() {
-        let addr = spawn_mock_tor(vec!["250 OK\r\n"]).await;
+        let responses = vec!["250 OK\r\n".to_string()];
+        let addr = spawn_mock_tor(responses).await;
         let control = TorControl::new(addr, Some("pass".into()));
 
         let res = control.kill_circuit("123").await;
@@ -225,10 +392,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_kill_circuit_failure() {
-        let addr = spawn_mock_tor(vec!["551 Unknown circuit\r\n"]).await;
+        let responses = vec!["551 Unknown circuit\r\n".to_string()];
+        let addr = spawn_mock_tor(responses).await;
         let control = TorControl::new(addr, Some("pass".into()));
 
         let res = control.kill_circuit("123").await;
+        assert!(res.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_enable_pow_no_hs() {
+        let responses = vec!["250+config-text=\r\nControlPort 9051\r\n.\r\n250 OK\r\n".to_string()];
+        let addr = spawn_mock_tor(responses).await;
+        let control = TorControl::new(addr, Some("pass".into()));
+
+        let res = control.enable_pow("onion", 10).await;
         assert!(res.is_err());
     }
 
@@ -255,7 +433,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_enable_pow_failure() {
-        let addr = spawn_mock_tor(vec!["500 Internal Error\r\n"]).await;
+        let responses = vec![
+            "250+config-text=\r\nHiddenServiceDir /var/lib/tor/hidden_service/test_service/\r\nHiddenServicePort 80 127.0.0.1:8080\r\n.\r\n250 OK\r\n".to_string(),
+            "500 Internal Error\r\n".to_string(),
+        ];
+        let addr = spawn_mock_tor(responses).await;
         let control = TorControl::new(addr, Some("pass".into()));
 
         let res = control.enable_pow("onion", 10).await;
@@ -264,7 +446,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_disable_pow_failure() {
-        let addr = spawn_mock_tor(vec!["500 Internal Error\r\n"]).await;
+        let responses = vec![
+            "250+config-text=\r\nHiddenServiceDir /var/lib/tor/hidden_service/test_service/\r\nHiddenServicePort 80 127.0.0.1:8080\r\n.\r\n250 OK\r\n".to_string(),
+            "500 Internal Error\r\n".to_string(),
+        ];
+        let addr = spawn_mock_tor(responses).await;
         let control = TorControl::new(addr, Some("pass".into()));
 
         let res = control.disable_pow().await;
@@ -273,10 +459,39 @@ mod tests {
 
     #[tokio::test]
     async fn test_kill_circuit_already_closed() {
-        let addr = spawn_mock_tor(vec!["552 Unknown circuit\r\n"]).await;
+        let responses = vec!["552 Unknown circuit\r\n".to_string()];
+        let addr = spawn_mock_tor(responses).await;
         let control = TorControl::new(addr, Some("pass".into()));
 
         let res = control.kill_circuit("123").await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_enable_pow_state_leak() {
+        let responses = vec![
+            "250+config-text=\r\nHiddenServiceDir /var/lib/tor/hidden_service/test_service/\r\nHiddenServicePort 80 127.0.0.1:8080\r\nHiddenServiceDir\r\n# Malformed line above treated as new block start\r\nHiddenServicePort 80 127.0.0.1:9090\r\n.\r\n250 OK\r\n".to_string(),
+            "250 OK\r\n".to_string(),
+        ];
+        let addr = spawn_mock_tor(responses).await;
+        let control = TorControl::new(addr, Some("pass".into()));
+
+        let res = control.enable_pow("onion.onion", 10).await;
+        assert!(res.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_enable_pow_dynamic_target() {
+        let responses = vec![
+            "250+config-text=\r\nHiddenServiceDir /var/lib/tor/hidden_service/default/\r\nHiddenServicePort 80 127.0.0.1:9090\r\nHiddenServiceDir /var/lib/tor/custom_service/\r\nHiddenServicePort 80 127.0.0.1:8080\r\n.\r\n250 OK\r\n".to_string(),
+            "250 OK\r\n".to_string(),
+        ];
+
+        let addr = spawn_mock_tor(responses).await;
+        let control = TorControl::new(addr, Some("pass".into()));
+
+        let res = control.enable_pow("onion.onion", 10).await;
+
         assert!(res.is_ok());
     }
 }

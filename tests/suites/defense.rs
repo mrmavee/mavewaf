@@ -417,8 +417,10 @@ async fn test_defense_monitor_internals() {
         monitor.record_unverified_request();
     }
 
+    monitor.simulate_elapsed_time(15);
+
     let score = monitor.calculate_attack_score();
-    assert!(score > 4.5);
+    assert!(score > 4.5, "Score was {score}, expected > 4.5");
 
     assert!(monitor.should_auto_defense());
     assert!(monitor.should_enable_pow().is_some());
@@ -428,4 +430,352 @@ async fn test_defense_monitor_internals() {
     assert!(monitor.should_enable_pow().is_none());
 
     assert!(!monitor.should_disable_pow());
+}
+
+#[tokio::test]
+async fn test_pow_requires_minimum_elapsed_time() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 1.0;
+    config.attack_pow_score = 2.0;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..50 {
+        let cid = format!("circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+        monitor.record_unverified_request();
+        monitor.record_circuit_kill();
+    }
+
+    let score_before = monitor.calculate_attack_score();
+    assert!(
+        score_before.abs() < f64::EPSILON,
+        "Score should be 0 when elapsed < 10s"
+    );
+    assert!(!monitor.should_auto_defense());
+
+    monitor.simulate_elapsed_time(15);
+
+    let score_after = monitor.calculate_attack_score();
+    assert!(score_after > 0.0, "Score should be > 0 after 15s elapsed");
+    assert!(monitor.should_enable_pow().is_some());
+    assert!(monitor.should_auto_defense());
+}
+
+#[tokio::test]
+async fn test_pow_requires_minimum_requests_or_activity() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 0.5;
+    config.attack_pow_score = 1.0;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..5 {
+        let cid = format!("circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+    }
+    monitor.simulate_elapsed_time(20);
+
+    let score = monitor.calculate_attack_score();
+    assert!(
+        score.abs() < f64::EPSILON,
+        "Score should be 0 with < 10 requests and no kills/unverified"
+    );
+
+    for i in 5..15 {
+        let cid = format!("circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+    }
+
+    let score_after = monitor.calculate_attack_score();
+    assert!(score_after > 0.0, "Score should be > 0 after 10+ requests");
+}
+
+#[tokio::test]
+async fn test_pow_activates_with_kills_even_low_requests() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 0.1;
+    config.attack_pow_score = 0.5;
+    config.defense_circuit_flood_threshold = 1;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..3 {
+        let cid = format!("bad_circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+        monitor.record_circuit_kill();
+    }
+    monitor.simulate_elapsed_time(15);
+
+    let score = monitor.calculate_attack_score();
+    assert!(
+        score > 0.0,
+        "Score should be > 0 with kills even if requests < 10"
+    );
+}
+
+#[tokio::test]
+async fn test_pow_activates_with_unverified_even_low_requests() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 0.1;
+    config.attack_pow_score = 0.5;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..5 {
+        let cid = format!("unverified_circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+        monitor.record_unverified_request();
+    }
+    monitor.simulate_elapsed_time(15);
+
+    let score = monitor.calculate_attack_score();
+    assert!(
+        score > 0.0,
+        "Score should be > 0 with unverified even if requests < 10"
+    );
+}
+
+#[tokio::test]
+async fn test_pow_enables_defense_mode_automatically() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 2.0;
+    config.attack_pow_score = 4.0;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    assert!(!monitor.is_defense_mode());
+    assert!(!monitor.is_pow_enabled());
+
+    monitor.mark_pow_enabled();
+
+    assert!(monitor.is_pow_enabled());
+    assert!(
+        monitor.is_defense_mode(),
+        "Defense mode should be activated when PoW is enabled"
+    );
+}
+
+#[tokio::test]
+async fn test_pow_does_not_duplicate_defense_activation() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 2.0;
+    config.attack_pow_score = 4.0;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    assert!(!monitor.enable_auto_defense());
+
+    for i in 0..30 {
+        let cid = format!("circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+        monitor.record_unverified_request();
+    }
+    monitor.simulate_elapsed_time(20);
+
+    let activated = monitor.enable_auto_defense();
+    assert!(activated, "Defense should activate first time");
+    assert!(monitor.is_defense_mode());
+
+    let activated_again = monitor.enable_auto_defense();
+    assert!(!activated_again, "Defense should not re-activate");
+
+    monitor.mark_pow_enabled();
+    assert!(monitor.is_pow_enabled());
+    assert!(monitor.is_defense_mode());
+}
+
+#[tokio::test]
+async fn test_low_circuit_usage_factor_requires_minimum_circuits() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_rpc_threshold = 100;
+    config.attack_defense_score = 0.5;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..3 {
+        let cid = format!("circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+    }
+    monitor.simulate_elapsed_time(15);
+
+    let score1 = monitor.calculate_attack_score();
+
+    let monitor2 = DefenseMonitor::new(Arc::new({
+        let mut c = (*create_test_config(0)).clone();
+        c.attack_rpc_threshold = 100;
+        c.attack_defense_score = 0.5;
+        c
+    }));
+    for i in 0..15 {
+        let cid = format!("circuit_{i}");
+        monitor2.record_request(Some(&cid), false);
+    }
+    monitor2.simulate_elapsed_time(15);
+
+    let score2 = monitor2.calculate_attack_score();
+    assert!(
+        score2 > score1,
+        "Score with 15 circuits ({score2}) should be higher than 3 circuits ({score1}) due to low_circuit_usage_factor"
+    );
+}
+
+#[tokio::test]
+async fn test_score_zero_on_startup() {
+    let config = Arc::new((*create_test_config(0)).clone());
+    let monitor = DefenseMonitor::new(config);
+
+    let score = monitor.calculate_attack_score();
+    assert!(
+        score.abs() < f64::EPSILON,
+        "Score should be 0 on fresh startup"
+    );
+    assert!(!monitor.should_auto_defense());
+    assert!(monitor.should_enable_pow().is_none());
+}
+
+#[tokio::test]
+async fn test_stem_attack_pattern_circuit_rotation() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_churn_threshold = 10;
+    config.attack_rpc_threshold = 5;
+    config.attack_defense_score = 2.0;
+    config.attack_pow_score = 4.0;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..30 {
+        let cid = format!("rotating_circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+    }
+
+    monitor.simulate_elapsed_time(15);
+
+    let score = monitor.calculate_attack_score();
+    assert!(
+        score > 2.0,
+        "Stem attack pattern (30 circuits, 1 req each) should trigger defense. Score: {score}"
+    );
+    assert!(monitor.should_auto_defense());
+}
+
+#[tokio::test]
+async fn test_attack_tracking_independent_of_threshold_reset() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_churn_threshold = 5;
+    config.attack_defense_score = 1.0;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..20 {
+        let cid = format!("circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+    }
+
+    monitor.simulate_elapsed_time(15);
+
+    let score1 = monitor.calculate_attack_score();
+    assert!(score1 > 0.0, "Score should be > 0 after requests");
+
+    for i in 20..40 {
+        let cid = format!("circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+    }
+
+    let score2 = monitor.calculate_attack_score();
+    assert!(
+        score2 >= score1,
+        "Score should increase or stay same with more circuits. Before: {score1}, After: {score2}"
+    );
+}
+
+#[tokio::test]
+async fn test_high_churn_rate_detection() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_churn_threshold = 10;
+    config.attack_defense_score = 1.5;
+    config.attack_pow_score = 3.0;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..50 {
+        let cid = format!("churn_circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+    }
+
+    monitor.simulate_elapsed_time(30);
+
+    let score = monitor.calculate_attack_score();
+    assert!(
+        score > 1.5,
+        "High churn rate (50 circuits in 30s = 100/min) should trigger defense. Score: {score}"
+    );
+
+    assert!(
+        monitor.should_auto_defense(),
+        "Defense mode should activate on high churn"
+    );
+}
+
+#[tokio::test]
+async fn test_pow_auto_disable_after_recovery() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 2.0;
+    config.attack_pow_score = 4.0;
+    config.attack_recovery_secs = 60;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    monitor.mark_pow_enabled();
+    assert!(monitor.is_pow_enabled());
+    assert!(monitor.is_defense_mode());
+
+    assert!(
+        !monitor.should_disable_pow(),
+        "PoW should not disable immediately after enabling"
+    );
+
+    monitor.simulate_pow_elapsed(70);
+
+    let should_disable = monitor.should_disable_pow();
+    assert!(
+        should_disable,
+        "PoW should auto-disable after recovery period with low score"
+    );
+
+    monitor.mark_pow_disabled();
+    assert!(!monitor.is_pow_enabled());
+}
+
+#[tokio::test]
+async fn test_pow_stays_enabled_during_attack() {
+    let mut config = (*create_test_config(0)).clone();
+    config.attack_defense_score = 1.0;
+    config.attack_pow_score = 2.0;
+    config.attack_recovery_secs = 30;
+    let config = Arc::new(config);
+    let monitor = DefenseMonitor::new(config);
+
+    for i in 0..30 {
+        let cid = format!("attack_circuit_{i}");
+        monitor.record_request(Some(&cid), false);
+        monitor.record_unverified_request();
+    }
+    monitor.simulate_elapsed_time(15);
+
+    monitor.mark_pow_enabled();
+    assert!(monitor.is_pow_enabled());
+
+    monitor.simulate_pow_elapsed(60);
+
+    let score = monitor.calculate_attack_score();
+    assert!(
+        score >= 1.0,
+        "Score should still be high during attack: {score}"
+    );
+
+    assert!(
+        !monitor.should_disable_pow(),
+        "PoW should stay enabled while score is still high"
+    );
 }

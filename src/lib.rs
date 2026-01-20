@@ -7,6 +7,9 @@ pub mod core;
 pub mod features;
 pub mod security;
 pub mod web;
+
+#[cfg(any(test, feature = "testing"))]
+pub mod test_utils;
 pub use config::{Config, Result, WafError, WafMode};
 pub use core::middleware::{
     EncryptedSession, RateLimiter, SESSION_COOKIE_NAME, format_set_cookie, generate_session_id,

@@ -22,6 +22,8 @@ pub struct DefenseMonitor {
     attack_kill_count: AtomicU64,
     attack_window_start: AtomicU64,
     attack_unverified_count: AtomicU64,
+    attack_circuits: HashMap<String, ()>,
+    attack_request_count: AtomicU64,
     pow_enabled: AtomicBool,
     pow_enabled_at: AtomicU64,
     last_score_check: AtomicU64,
@@ -55,6 +57,8 @@ impl DefenseMonitor {
             attack_kill_count: AtomicU64::new(0),
             attack_window_start: AtomicU64::new(now_epoch),
             attack_unverified_count: AtomicU64::new(0),
+            attack_circuits: HashMap::new(),
+            attack_request_count: AtomicU64::new(0),
             pow_enabled: AtomicBool::new(false),
             pow_enabled_at: AtomicU64::new(0),
             last_score_check: AtomicU64::new(0),
@@ -64,6 +68,7 @@ impl DefenseMonitor {
     /// Records a request and updates statistics.
     pub fn record_request(&self, circuit_id: Option<&str>, is_error: bool) {
         self.request_count.fetch_add(1, Ordering::Relaxed);
+        self.attack_request_count.fetch_add(1, Ordering::Relaxed);
         if is_error {
             self.error_count.fetch_add(1, Ordering::Relaxed);
         }
@@ -75,12 +80,27 @@ impl DefenseMonitor {
             } else {
                 circuit_counts.insert(circuit.to_string(), AtomicU64::new(1));
             }
+            self.attack_circuits.pin().insert(circuit.to_string(), ());
         }
 
         self.check_thresholds();
     }
 
-    fn check_thresholds(&self) {
+    pub fn is_circuit_blocked(&self, circuit_id: &str) -> bool {
+        let karma_map = self.circuit_karma.pin();
+        if let Some(karma) = karma_map.get(circuit_id) {
+            let score = karma.load(Ordering::Relaxed);
+            return score >= self.config.karma_threshold;
+        }
+        false
+    }
+
+    /// Checks if defense thresholds have been exceeded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the `last_reset` mutex is poisoned.
+    pub fn check_thresholds(&self) {
         let now_epoch = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -126,6 +146,7 @@ impl DefenseMonitor {
         self.error_count.store(0, Ordering::Relaxed);
         self.request_count.store(0, Ordering::Relaxed);
         self.circuit_counts.pin().clear();
+        self.circuit_karma.pin().clear();
         self.last_reset_epoch.store(now_epoch, Ordering::Relaxed);
         *last_reset = Instant::now();
     }
@@ -239,6 +260,8 @@ impl DefenseMonitor {
         if now.saturating_sub(window_start) >= 60 {
             self.attack_kill_count.store(0, Ordering::Relaxed);
             self.attack_unverified_count.store(0, Ordering::Relaxed);
+            self.attack_request_count.store(0, Ordering::Relaxed);
+            self.attack_circuits.pin().clear();
             self.attack_window_start.store(now, Ordering::Relaxed);
         }
     }
@@ -247,21 +270,26 @@ impl DefenseMonitor {
     pub fn calculate_attack_score(&self) -> f64 {
         self.reset_attack_window_if_needed();
 
-        let requests = self.request_count.load(Ordering::Relaxed).max(1);
-        let circuits_seen = u32::try_from(self.circuit_counts.pin().len()).unwrap_or(u32::MAX);
+        let raw_requests = self.attack_request_count.load(Ordering::Relaxed);
+        let circuits_seen = u32::try_from(self.attack_circuits.pin().len()).unwrap_or(u32::MAX);
         let kills =
             u32::try_from(self.attack_kill_count.load(Ordering::Relaxed)).unwrap_or(u32::MAX);
         let unverified =
             u32::try_from(self.attack_unverified_count.load(Ordering::Relaxed)).unwrap_or(u32::MAX);
-        let requests_u32 = u32::try_from(requests).unwrap_or(u32::MAX);
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
         let window_start = self.attack_window_start.load(Ordering::Relaxed);
-        let elapsed_secs =
-            f64::from(u32::try_from(now.saturating_sub(window_start).max(1)).unwrap_or(u32::MAX));
+        let elapsed = now.saturating_sub(window_start);
+
+        if elapsed < 10 || (raw_requests < 10 && kills == 0 && unverified == 0) {
+            return 0.0;
+        }
+
+        let requests_u32 = u32::try_from(raw_requests.max(1)).unwrap_or(u32::MAX);
+        let elapsed_secs = f64::from(u32::try_from(elapsed.max(1)).unwrap_or(u32::MAX));
 
         let churn_rate = (f64::from(circuits_seen) * 60.0) / elapsed_secs;
         let request_rate = f64::from(requests_u32) / elapsed_secs;
@@ -280,14 +308,15 @@ impl DefenseMonitor {
         let churn_factor = (churn_rate / f64::from(self.config.attack_churn_threshold)).min(2.0);
         let request_rate_factor =
             (request_rate / f64::from(self.config.attack_rps_threshold)).min(2.0);
-        let low_circuit_usage_factor =
-            if avg_requests_per_circuit < f64::from(self.config.attack_rpc_threshold) {
-                ((f64::from(self.config.attack_rpc_threshold) - avg_requests_per_circuit)
-                    / f64::from(self.config.attack_rpc_threshold))
-                .min(1.0)
-            } else {
-                0.0
-            };
+        let low_circuit_usage_factor = if circuits_seen >= 5
+            && avg_requests_per_circuit < f64::from(self.config.attack_rpc_threshold)
+        {
+            ((f64::from(self.config.attack_rpc_threshold) - avg_requests_per_circuit)
+                / f64::from(self.config.attack_rpc_threshold))
+            .min(1.0)
+        } else {
+            0.0
+        };
         let kill_factor =
             (kills_per_min / f64::from(self.config.defense_circuit_flood_threshold)).min(2.0);
 
@@ -328,6 +357,9 @@ impl DefenseMonitor {
             .as_secs();
         self.pow_enabled.store(true, Ordering::Relaxed);
         self.pow_enabled_at.store(now, Ordering::Relaxed);
+        if !self.is_defense_mode() {
+            self.activate_defense(now);
+        }
         tracing::warn!(
             score = self.calculate_attack_score(),
             "Tor PoW enabled due to attack"
@@ -368,70 +400,51 @@ impl DefenseMonitor {
         score >= self.config.attack_defense_score
     }
 
+    pub fn enable_auto_defense(&self) -> bool {
+        if self.is_defense_mode() {
+            return false;
+        }
+        if self.should_auto_defense() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            self.activate_defense(now);
+            return true;
+        }
+        false
+    }
+
     #[must_use]
     pub fn is_pow_enabled(&self) -> bool {
         self.pow_enabled.load(Ordering::Relaxed)
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
+impl DefenseMonitor {
+    pub fn simulate_elapsed_time(&self, seconds: u64) {
+        let current = self.attack_window_start.load(Ordering::Relaxed);
+        self.attack_window_start
+            .store(current.saturating_sub(seconds), Ordering::Relaxed);
+    }
+
+    pub fn simulate_pow_elapsed(&self, seconds: u64) {
+        let current = self.pow_enabled_at.load(Ordering::Relaxed);
+        self.pow_enabled_at
+            .store(current.saturating_sub(seconds), Ordering::Relaxed);
+        let last_check = self.last_score_check.load(Ordering::Relaxed);
+        self.last_score_check
+            .store(last_check.saturating_sub(10), Ordering::Relaxed);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     fn create_test_config() -> Arc<Config> {
-        Arc::new(Config {
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
-            internal_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081),
-            backend_url: "http://localhost:8080".to_string(),
-            waf_mode: WafMode::Normal,
-            rate_limit_rps: 100,
-            rate_limit_burst: 100,
-            features: crate::config::FeatureFlags {
-                captcha_enabled: true,
-                webhook_enabled: false,
-                waf_body_scan_enabled: false,
-                coep_enabled: false,
-            },
-            captcha_secret: "secret".to_string(),
-            captcha_ttl: 300,
-            captcha_difficulty: "medium".to_string(),
-            captcha_style: crate::config::CaptchaStyle::Simple,
-            session_secret: "secret".to_string(),
-            session_expiry_secs: 3600,
-            tor_circuit_prefix: "fc00".to_string(),
-            tor_control_addr: None,
-            tor_control_password: None,
-            torrc_path: None,
-            defense_error_rate_threshold: 0.5,
-            defense_circuit_flood_threshold: 10,
-            defense_cooldown_secs: 5,
-            webhook_url: None,
-            max_captcha_failures: 3,
-            captcha_gen_limit: 5,
-            ssrf_allowed_hosts: vec![],
-            waf_body_scan_max_size: 1024,
-            rate_limit_session_rps: 10,
-            rate_limit_session_burst: 20,
-            app_name: "TestApp".to_string(),
-            favicon_base64: String::new(),
-            meta_title: "Test".to_string(),
-            meta_description: "Test".to_string(),
-            meta_keywords: "Test".to_string(),
-            log_format: "pretty".to_string(),
-            csp_extra_sources: String::new(),
-            coop_policy: "same-origin-allow-popups".to_string(),
-            honeypot_paths: std::collections::HashSet::new(),
-            karma_threshold: 50,
-            webhook_token: None,
-            attack_churn_threshold: 30,
-            attack_rps_threshold: 30,
-            attack_rpc_threshold: 5,
-            attack_defense_score: 2.0,
-            attack_pow_score: 4.0,
-            attack_pow_effort: 5,
-            attack_recovery_secs: 300,
-        })
+        crate::test_utils::create_test_config()
     }
 
     #[test]
@@ -496,7 +509,9 @@ mod tests {
 
     #[test]
     fn test_auto_deactivation() {
-        let config = create_test_config();
+        let mut config = (*create_test_config()).clone();
+        config.defense_cooldown_secs = 5;
+        let config = Arc::new(config);
         let monitor = DefenseMonitor::new(config);
 
         let now = std::time::SystemTime::now()
@@ -532,5 +547,25 @@ mod tests {
 
         monitor.add_karma("circuit_1", 20);
         assert!(monitor.check_karma_threshold("circuit_1"));
+    }
+    #[test]
+    fn test_karma_cleanup() {
+        let config = create_test_config();
+        let monitor = DefenseMonitor::new(config);
+
+        monitor.add_karma("circuit_dirty", 100);
+        assert_eq!(monitor.get_karma("circuit_dirty"), 100);
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        monitor.last_reset_epoch.store(now - 65, Ordering::Relaxed);
+        *monitor.last_reset.lock().unwrap() =
+            Instant::now().checked_sub(Duration::from_secs(65)).unwrap();
+
+        monitor.check_thresholds();
+
+        assert_eq!(monitor.get_karma("circuit_dirty"), 0);
     }
 }

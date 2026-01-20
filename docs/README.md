@@ -15,6 +15,7 @@ cp docs/.env.example .env
 | `LISTEN_ADDR` | External address receiving PROXY protocol traffic | ✓ | `0.0.0.0:8080` |
 | `INTERNAL_ADDR` | Internal bind address for the engine | ✓ | `127.0.0.1:8081` |
 | `BACKEND_URL` | Upstream application URL | ✓ | - |
+| `CONCURRENCY_LIMIT` | Max concurrent connections | - | `1024` |
 
 ---
 

@@ -100,6 +100,24 @@ impl MaveProxy {
     }
 
     async fn check_global_defense(&self) {
+        if self.defense_monitor.enable_auto_defense() {
+            let msg = "Defense mode activated due to high attack score".to_string();
+            warn!(action = "DEFENSE_ACTIVATED", "{msg}");
+            self.webhook.notify(WebhookPayload {
+                event_type: EventType::DefenseModeActivated,
+                timestamp: i64::try_from(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                )
+                .unwrap_or(0),
+                circuit_id: None,
+                severity: 3,
+                message: msg,
+            });
+        }
+
         if let Some(tor) = &self.tor_control {
             if let Some(effort) = self.defense_monitor.should_enable_pow() {
                 match tor.enable_pow("mavewaf-service", effort).await {
@@ -700,65 +718,11 @@ impl ProxyHttp for MaveProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CaptchaStyle, FeatureFlags, WafMode};
     use pingora::http::RequestHeader;
     use pingora::upstreams::peer::Peer;
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     fn create_test_config() -> Arc<Config> {
-        Arc::new(Config {
-            listen_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 8080),
-            internal_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8081),
-            backend_url: "http://127.0.0.1:8080".to_string(),
-            waf_mode: WafMode::Normal,
-            rate_limit_rps: 10,
-            rate_limit_burst: 10,
-            features: FeatureFlags {
-                captcha_enabled: false,
-                webhook_enabled: false,
-                waf_body_scan_enabled: false,
-                coep_enabled: false,
-            },
-            captcha_secret: "test".to_string(),
-            captcha_ttl: 60,
-            captcha_difficulty: "easy".to_string(),
-            captcha_style: CaptchaStyle::Simple,
-            session_secret: "0000000000000000000000000000000000000000000000000000000000000000"
-                .to_string(),
-            session_expiry_secs: 60,
-            tor_circuit_prefix: "fc00".to_string(),
-            tor_control_addr: None,
-            tor_control_password: None,
-            torrc_path: None,
-            defense_error_rate_threshold: 0.1,
-            defense_circuit_flood_threshold: 10,
-            defense_cooldown_secs: 10,
-            webhook_url: None,
-            max_captcha_failures: 3,
-            captcha_gen_limit: 5,
-            ssrf_allowed_hosts: vec![],
-            waf_body_scan_max_size: 1024,
-            rate_limit_session_rps: 10,
-            rate_limit_session_burst: 10,
-            app_name: "Test".to_string(),
-            favicon_base64: String::new(),
-            meta_title: "Test".to_string(),
-            meta_description: "Test".to_string(),
-            meta_keywords: "Test".to_string(),
-            log_format: "json".to_string(),
-            csp_extra_sources: String::new(),
-            coop_policy: "same-origin-allow-popups".to_string(),
-            honeypot_paths: std::collections::HashSet::new(),
-            karma_threshold: 50,
-            webhook_token: None,
-            attack_churn_threshold: 30,
-            attack_rps_threshold: 30,
-            attack_rpc_threshold: 5,
-            attack_defense_score: 2.0,
-            attack_pow_score: 4.0,
-            attack_pow_effort: 5,
-            attack_recovery_secs: 300,
-        })
+        crate::test_utils::create_test_config()
     }
 
     fn create_proxy(config: Arc<Config>) -> MaveProxy {
@@ -837,8 +801,14 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(resp.headers.get("Server").is_none());
-        assert!(resp.headers.get("X-Powered-By").is_none());
+        assert_eq!(
+            resp.headers.get("Server").unwrap().to_str().unwrap(),
+            "CERN-httpd/3.0 (Mave)"
+        );
+        assert_eq!(
+            resp.headers.get("X-Powered-By").unwrap().to_str().unwrap(),
+            "you-shall-not-pass"
+        );
 
         assert!(resp.headers.get("Strict-Transport-Security").is_some());
         assert!(resp.headers.get("Content-Security-Policy").is_some());

@@ -70,7 +70,7 @@ fn main() {
         config.clone(),
         rate_limiter,
         session_rate_limiter,
-        defense_monitor,
+        defense_monitor.clone(),
         webhook_notifier,
         captcha_manager,
         waf_engine,
@@ -80,14 +80,26 @@ fn main() {
     proxy_service.add_tcp(&config.internal_addr.to_string());
     server.add_service(proxy_service);
 
+    let defense_monitor_bg = defense_monitor.clone();
     let protocol_config = ProxyProtocolConfig {
         listen_addr: config.listen_addr,
         internal_addr: config.internal_addr,
         circuit_prefix: config.tor_circuit_prefix.clone(),
+        concurrency_limit: config.concurrency_limit,
+        defense_monitor: Some(defense_monitor),
     };
 
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+        rt.spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                defense_monitor_bg.check_thresholds();
+            }
+        });
+
         rt.block_on(run_proxy_listener(protocol_config));
     });
 

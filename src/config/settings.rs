@@ -210,6 +210,8 @@ pub struct Config {
     pub attack_pow_effort: u32,
     /// Seconds of low score before auto-recovery.
     pub attack_recovery_secs: u64,
+    /// Maximum concurrent connections allowed.
+    pub concurrency_limit: usize,
 }
 
 impl Config {
@@ -327,6 +329,7 @@ impl Config {
             attack_pow_score: get_env_f64_or("ATTACK_POW_SCORE", 4.0),
             attack_pow_effort: get_env_u32_or("ATTACK_POW_EFFORT", 5),
             attack_recovery_secs: get_env_u64_or("ATTACK_RECOVERY_SECS", 300),
+            concurrency_limit: get_env_usize_or("CONCURRENCY_LIMIT", 1024),
         })
     }
 
