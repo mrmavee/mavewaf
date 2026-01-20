@@ -135,7 +135,6 @@ fn configure_tcp_stream(stream: &TcpStream) {
     {
         let _ = sock.set_tcp_user_timeout(Some(std::time::Duration::from_millis(10000)));
     }
-
 }
 
 async fn handle_connection(
