@@ -6,6 +6,7 @@
 use async_chunked_transfer::Encoder;
 use async_compression::tokio::write::{BrotliEncoder, GzipEncoder};
 use proxy_header::{ParseConfig, ProxyHeader};
+use std::fmt::Write;
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -59,6 +60,7 @@ pub struct ProxyProtocolConfig {
     pub listen_addr: SocketAddr,
     pub internal_addr: SocketAddr,
     pub circuit_prefix: String,
+    pub concurrency_limit: usize,
 }
 
 /// Runs the PROXY protocol listener.
@@ -85,11 +87,19 @@ pub async fn run_proxy_listener(config: ProxyProtocolConfig) {
         "Forwarding to Pingora"
     );
 
+    let connection_limit =
+        std::sync::Arc::new(tokio::sync::Semaphore::new(config.concurrency_limit));
+
     loop {
+        let Ok(permit) = connection_limit.clone().acquire_owned().await else {
+            break;
+        };
+
         match listener.accept().await {
             Ok((mut client, peer_addr)) => {
                 let cfg = config.clone();
                 tokio::spawn(async move {
+                    let _permit = permit;
                     if let Err(e) = handle_connection(&mut client, peer_addr, &cfg).await {
                         debug!(peer_addr = %peer_addr, error = %e, "Connection error");
                     }
@@ -137,123 +147,159 @@ async fn handle_connection(
     Ok(())
 }
 
+fn validate_and_build_headers(
+    req: &httparse::Request,
+    circuit_id: Option<&String>,
+) -> std::io::Result<(String, Option<usize>, Option<String>)> {
+    let mut content_length: Option<usize> = None;
+    let mut transfer_encoding = false;
+    let mut accept_encoding = None;
+
+    for header in req.headers.iter() {
+        let name = header.name.to_lowercase();
+        if name == "content-length" {
+            if content_length.is_some() {
+                warn!(
+                    action = "REJECT",
+                    "Duplicate Content-Length headers detected"
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Duplicate Content-Length",
+                ));
+            }
+            let value_str = std::str::from_utf8(header.value)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            content_length = Some(
+                value_str
+                    .trim()
+                    .parse()
+                    .map_err(|_| std::io::Error::from(std::io::ErrorKind::InvalidData))?,
+            );
+        } else if name == "transfer-encoding" {
+            transfer_encoding = true;
+        } else if name == "accept-encoding" {
+            accept_encoding = Some(String::from_utf8_lossy(header.value).to_string());
+        }
+    }
+
+    if transfer_encoding {
+        warn!(
+            action = "REJECT",
+            "Chunked Transfer-Encoding not supported / TE disallowed"
+        );
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Chunked Transfer-Encoding disallowed",
+        ));
+    }
+
+    let mut modified_request = String::new();
+    if let (Some(method), Some(path), Some(version)) = (req.method, req.path, req.version) {
+        let _ = write!(modified_request, "{method} {path} HTTP/1.{version}\r\n");
+    } else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Malformed Request Line",
+        ));
+    }
+
+    for header in req.headers.iter() {
+        let name = header.name;
+        if name.eq_ignore_ascii_case("connection")
+            || name.eq_ignore_ascii_case("content-length")
+            || name.eq_ignore_ascii_case("x-circuit-id")
+        {
+            continue;
+        }
+        let value = std::str::from_utf8(header.value)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        let _ = write!(modified_request, "{name}: {value}\r\n");
+    }
+
+    modified_request.push_str("Connection: close\r\n");
+    if let Some(cid) = circuit_id {
+        let _ = write!(modified_request, "X-Circuit-ID: {cid}\r\n");
+    }
+    if let Some(cl) = content_length {
+        let _ = write!(modified_request, "Content-Length: {cl}\r\n");
+    }
+    modified_request.push_str("\r\n");
+
+    Ok((modified_request, content_length, accept_encoding))
+}
+
 async fn process_request(
     client: &mut TcpStream,
     upstream: &mut TcpStream,
     circuit_id: Option<String>,
 ) -> std::io::Result<Option<String>> {
-    use tokio::io::AsyncBufReadExt;
-    use tokio::io::BufReader;
-
-    let mut reader = BufReader::new(client);
-    let mut request_buf = Vec::with_capacity(4096);
+    let mut buf = [0u8; 8192];
+    let mut pos = 0;
 
     loop {
-        let bytes_read = reader.read_until(b'\n', &mut request_buf).await?;
+        let bytes_read = if let Ok(result) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            client.read(&mut buf[pos..]),
+        )
+        .await
+        {
+            result?
+        } else {
+            warn!("Request header read timed out");
+            return Ok(None);
+        };
+
         if bytes_read == 0 {
             return Ok(None);
         }
+        pos += bytes_read;
 
-        if request_buf.len() >= 4 {
-            let len = request_buf.len();
-            if &request_buf[len - 4..] == b"\r\n\r\n" {
-                break;
+        let mut headers = [httparse::Header {
+            name: "",
+            value: &[],
+        }; 64];
+        let mut req = httparse::Request::new(&mut headers);
+
+        match req.parse(&buf[..pos]) {
+            Ok(httparse::Status::Complete(header_len)) => {
+                let Ok((modified_request, content_length, accept_encoding)) =
+                    validate_and_build_headers(&req, circuit_id.as_ref())
+                else {
+                    return Ok(None);
+                };
+
+                upstream.write_all(modified_request.as_bytes()).await?;
+
+                let body_start = header_len;
+                let body_in_buf = pos - body_start;
+
+                if body_in_buf > 0 {
+                    upstream.write_all(&buf[body_start..pos]).await?;
+                }
+
+                let cl = content_length.unwrap_or(0);
+                if cl > body_in_buf {
+                    let remaining = (cl - body_in_buf) as u64;
+                    let mut limited = client.take(remaining);
+                    tokio::io::copy(&mut limited, upstream).await?;
+                }
+
+                upstream.flush().await?;
+                return Ok(accept_encoding);
+            }
+            Ok(httparse::Status::Partial) => {
+                if pos >= buf.len() {
+                    warn!("Request headers too large");
+                    return Ok(None);
+                }
+            }
+            Err(e) => {
+                warn!(error = ?e, "Invalid HTTP Request");
+                return Ok(None);
             }
         }
-
-        if request_buf.len() > 8192 {
-            warn!(
-                size = request_buf.len(),
-                limit = 8192,
-                "Request headers too large"
-            );
-            return Ok(None);
-        }
     }
-
-    let request_str = String::from_utf8_lossy(&request_buf).to_string();
-
-    let accept_encoding = request_str
-        .lines()
-        .find(|line| line.to_lowercase().starts_with("accept-encoding:"))
-        .map(|line| {
-            line.split_once(':')
-                .map_or("", |(_, v)| v.trim())
-                .to_string()
-        });
-
-    let mut new_lines: Vec<&str> = request_str
-        .lines()
-        .filter(|line| !line.to_lowercase().starts_with("connection:"))
-        .collect();
-
-    if new_lines.last().is_some_and(|last| last.is_empty()) {
-        new_lines.pop();
-    }
-
-    let mut injected_headers = vec!["Connection: close".to_string()];
-    if let Some(ref cid) = circuit_id {
-        injected_headers.push(format!("X-Circuit-ID: {cid}"));
-    }
-
-    let mut modified_request = String::new();
-    for line in new_lines {
-        modified_request.push_str(line);
-        modified_request.push_str("\r\n");
-    }
-
-    for header in injected_headers {
-        modified_request.push_str(&header);
-        modified_request.push_str("\r\n");
-    }
-
-    modified_request.push_str("\r\n");
-
-    let request_lower = request_str.to_lowercase();
-    let has_transfer_encoding = request_lower.contains("transfer-encoding:");
-
-    let content_length_headers: Vec<&str> = request_str
-        .lines()
-        .filter(|l| l.to_lowercase().starts_with("content-length:"))
-        .collect();
-
-    if content_length_headers.len() > 1 {
-        warn!(
-            action = "REJECT",
-            "Duplicate Content-Length headers detected"
-        );
-        return Ok(None);
-    }
-
-    let content_length: usize = content_length_headers
-        .first()
-        .and_then(|l| l.split_once(':').map(|(_, v)| v))
-        .and_then(|v| v.trim().parse().ok())
-        .unwrap_or(0);
-
-    if has_transfer_encoding && content_length > 0 {
-        warn!(
-            action = "REJECT",
-            "Ambiguous request: both Content-Length and Transfer-Encoding"
-        );
-        return Ok(None);
-    }
-
-    if has_transfer_encoding {
-        warn!(action = "REJECT", "Chunked Transfer-Encoding not supported");
-        return Ok(None);
-    }
-
-    upstream.write_all(modified_request.as_bytes()).await?;
-
-    if content_length > 0 {
-        let mut body = vec![0u8; content_length];
-        reader.read_exact(&mut body).await?;
-        upstream.write_all(&body).await?;
-    }
-
-    upstream.flush().await?;
-    Ok(accept_encoding)
 }
 
 async fn process_response(
@@ -553,6 +599,7 @@ mod tests {
             listen_addr: "127.0.0.1:8080".parse().unwrap(),
             internal_addr: "127.0.0.1:8081".parse().unwrap(),
             circuit_prefix: "fc00".into(),
+            concurrency_limit: 1024,
         };
         let cloned = config;
         assert_eq!(cloned.circuit_prefix, "fc00");
@@ -594,6 +641,7 @@ mod tests {
         let res = client_task.await.unwrap();
         assert!(res.contains("Transfer-Encoding: chunked") || res.contains("Hello"));
     }
+
     #[tokio::test]
     async fn test_duplicate_content_length() {
         let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -603,7 +651,6 @@ mod tests {
             let (mut socket, _) = upstream.accept().await.unwrap();
             let mut buf = [0u8; 1024];
             let n = socket.read(&mut buf).await.unwrap();
-
             assert_eq!(n, 0, "Proxy forwarded duplicate Content-Length headers!");
         });
 
@@ -616,6 +663,70 @@ mod tests {
                 .write_all(
                     b"POST / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\nHello",
                 )
+                .await
+                .unwrap();
+        });
+
+        let (mut client_stream, _) = dummy_client_listener.accept().await.unwrap();
+        let mut upstream_conn = TcpStream::connect(upstream_addr).await.unwrap();
+
+        let result = process_request(&mut client_stream, &mut upstream_conn, None).await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_smuggling_attempt_space_in_te() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream.local_addr().unwrap();
+
+        let _server_task = tokio::spawn(async move {
+            let (mut socket, _) = upstream.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = socket.read(&mut buf).await.unwrap();
+            assert_eq!(n, 0, "Proxy forwarded smuggling attempt!");
+        });
+
+        let dummy_client_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dummy_client_addr = dummy_client_listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let mut stream = TcpStream::connect(dummy_client_addr).await.unwrap();
+            stream
+                .write_all(b"POST / HTTP/1.1\r\nTransfer-Encoding : chunked\r\n\r\n0\r\n\r\n")
+                .await
+                .unwrap();
+        });
+
+        let (mut client_stream, _) = dummy_client_listener.accept().await.unwrap();
+        let mut upstream_conn = TcpStream::connect(upstream_addr).await.unwrap();
+
+        let result = process_request(&mut client_stream, &mut upstream_conn, None).await;
+
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_smuggling_attempt_te_and_cl() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_addr = upstream.local_addr().unwrap();
+
+        let _server_task = tokio::spawn(async move {
+            let (mut socket, _) = upstream.accept().await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = socket.read(&mut buf).await.unwrap();
+            assert_eq!(n, 0, "Proxy forwarded ambiguous request!");
+        });
+
+        let dummy_client_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dummy_client_addr = dummy_client_listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            let mut stream = TcpStream::connect(dummy_client_addr).await.unwrap();
+            stream
+                .write_all(b"POST / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\nHello")
                 .await
                 .unwrap();
         });

@@ -30,6 +30,7 @@ bytes = "1.11.0"
 deadpool = { version = "0.12.3", features = ["rt_tokio_1"] }
 dotenvy = "0.15.7"
 hmac = "0.12.1"
+httparse = "1.10.1"
 image = { version = "0.25.9", default-features = false, features = ["webp", "png", "jpeg"] }
 imageproc = "0.25.0"
 libinjectionrs = "0.1.1"

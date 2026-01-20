@@ -292,6 +292,7 @@ mod tests {
             attack_pow_score: 4.0,
             attack_pow_effort: 5,
             attack_recovery_secs: 300,
+            concurrency_limit: 1024,
         })
     }
 

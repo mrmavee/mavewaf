@@ -84,6 +84,7 @@ fn main() {
         listen_addr: config.listen_addr,
         internal_addr: config.internal_addr,
         circuit_prefix: config.tor_circuit_prefix.clone(),
+        concurrency_limit: config.concurrency_limit,
     };
 
     std::thread::spawn(move || {
