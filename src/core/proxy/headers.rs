@@ -42,23 +42,29 @@ pub fn inject_security_headers(
     };
 
     let csp = if csp_extra.is_empty() {
-        "default-src * data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval' 'unsafe-dynamic'; \
-         script-src 'self' 'unsafe-inline'; \
-         connect-src * data: blob: 'unsafe-inline'; \
-         img-src * data: blob: 'unsafe-inline'; \
-         frame-src * data: blob: ; \
-         style-src * data: blob: 'unsafe-inline'; \
-         font-src * data: blob: 'unsafe-inline';"
+        "default-src 'none'; \
+         base-uri 'self'; \
+         object-src 'none'; \
+         form-action 'self'; \
+         frame-ancestors 'none'; \
+         script-src 'self'; \
+         style-src 'self'; \
+         img-src 'self' data: blob:; \
+         font-src 'self' data:; \
+         connect-src 'self';"
             .to_string()
     } else {
         format!(
-            "default-src * data: blob: filesystem: about: ws: wss: 'unsafe-inline' 'unsafe-eval' 'unsafe-dynamic' {csp_extra}; \
-             script-src 'self' 'unsafe-inline' {csp_extra}; \
-             connect-src * data: blob: 'unsafe-inline' {csp_extra}; \
-             img-src * data: blob: 'unsafe-inline' {csp_extra}; \
-             frame-src * data: blob: {csp_extra}; \
-             style-src * data: blob: 'unsafe-inline' {csp_extra}; \
-             font-src * data: blob: 'unsafe-inline' {csp_extra};"
+            "default-src 'none'; \
+             base-uri 'self'; \
+             object-src 'none'; \
+             form-action 'self'; \
+             frame-ancestors 'none'; \
+             script-src 'self' {csp_extra}; \
+             style-src 'self' {csp_extra}; \
+             img-src 'self' data: blob: {csp_extra}; \
+             font-src 'self' data: {csp_extra}; \
+             connect-src 'self' {csp_extra};"
         )
     };
 
