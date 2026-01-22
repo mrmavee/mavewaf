@@ -125,7 +125,9 @@ mod tests {
                 webhook_enabled: false,
                 waf_body_scan_enabled: false,
                 coep_enabled: false,
+                csp_injected: true,
             },
+
             captcha_secret: "secret".to_string(),
             captcha_ttl: 300,
             captcha_difficulty: "medium".to_string(),
@@ -165,6 +167,7 @@ mod tests {
             attack_pow_effort: 5,
             attack_recovery_secs: 300,
             concurrency_limit: 1024,
+            client_max_body_size: 10 * 1024 * 1024,
         })
     }
 

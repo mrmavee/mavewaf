@@ -99,6 +99,20 @@ pub struct FeatureFlags {
     pub waf_body_scan_enabled: bool,
     /// Enable Cross-Origin-Embedder-Policy header.
     pub coep_enabled: bool,
+    /// Whether to inject Content-Security-Policy header.
+    pub csp_injected: bool,
+}
+
+impl FeatureFlags {
+    fn from_env() -> Self {
+        Self {
+            captcha_enabled: get_env_bool("CAPTCHA_ENABLED"),
+            webhook_enabled: get_env_bool("WEBHOOK_ENABLED"),
+            waf_body_scan_enabled: get_env_bool("WAF_BODY_SCAN_ENABLED"),
+            coep_enabled: get_env_bool("COEP_ENABLED"),
+            csp_injected: get_env_bool("CSP_INJECTED"),
+        }
+    }
 }
 
 /// CAPTCHA visual style.
@@ -212,6 +226,8 @@ pub struct Config {
     pub attack_recovery_secs: u64,
     /// Maximum concurrent connections allowed.
     pub concurrency_limit: usize,
+    /// Maximum client request body size in bytes (default 10MB).
+    pub client_max_body_size: usize,
 }
 
 impl Config {
@@ -262,12 +278,8 @@ impl Config {
         let defense_error_rate_threshold = get_env_f64("DEFENSE_ERROR_RATE_THRESHOLD");
         let defense_circuit_flood_threshold = get_env_u32("DEFENSE_CIRCUIT_FLOOD_THRESHOLD");
         let defense_cooldown_secs = get_env_u64_or("DEFENSE_COOLDOWN_SECS", 300);
-        let features = FeatureFlags {
-            captcha_enabled: get_env_bool("CAPTCHA_ENABLED"),
-            webhook_enabled: get_env_bool("WEBHOOK_ENABLED"),
-            waf_body_scan_enabled: get_env_bool("WAF_BODY_SCAN_ENABLED"),
-            coep_enabled: get_env_bool("COEP_ENABLED"),
-        };
+        let features = FeatureFlags::from_env();
+
         let webhook_url = env::var("WEBHOOK_URL").ok().filter(|s| !s.is_empty());
         let waf_body_scan_max_size = get_env_usize_or("WAF_BODY_SCAN_MAX_SIZE", 32768);
         let rate_limit_session_rps = get_env_u32_or("RATE_LIMIT_SESSION_RPS", 3);
@@ -330,6 +342,7 @@ impl Config {
             attack_pow_effort: get_env_u32_or("ATTACK_POW_EFFORT", 5),
             attack_recovery_secs: get_env_u64_or("ATTACK_RECOVERY_SECS", 300),
             concurrency_limit: get_env_usize_or("CONCURRENCY_LIMIT", 1024),
+            client_max_body_size: get_env_usize_or("CLIENT_MAX_BODY_SIZE", 10 * 1024 * 1024),
         })
     }
 

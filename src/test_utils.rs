@@ -32,7 +32,9 @@ pub fn create_test_config() -> Arc<Config> {
             webhook_enabled: false,
             waf_body_scan_enabled: false,
             coep_enabled: false,
+            csp_injected: true,
         },
+
         captcha_secret: "secret".to_string(),
         captcha_ttl: 300,
         captcha_difficulty: "medium".to_string(),
@@ -72,6 +74,7 @@ pub fn create_test_config() -> Arc<Config> {
         attack_pow_score: 4.0,
         attack_pow_effort: 5,
         attack_recovery_secs: 300,
-        concurrency_limit: 1024,
+        concurrency_limit: 100,
+        client_max_body_size: 10 * 1024 * 1024,
     })
 }

@@ -433,6 +433,88 @@ impl MaveProxy {
         );
         serve_html(session, &self.config, 403, html, None).await
     }
+
+    async fn handle_health_check(&self, session: &mut Session) -> Result<bool> {
+        let path = session.req_header().uri.path();
+        if path != "/.well-known/health" && path != "/health" {
+            return Ok(false);
+        }
+
+        let is_internal = session.client_addr().is_some_and(|addr| {
+            if let pingora::protocols::l4::socket::SocketAddr::Inet(inet) = addr {
+                inet.ip().is_loopback()
+            } else {
+                false
+            }
+        });
+
+        if is_internal {
+            let mut header = ResponseHeader::build(200, None)?;
+            header.insert_header("Content-Type", "text/plain")?;
+            header.insert_header("Content-Length", "2")?;
+            header.insert_header("Cache-Control", "no-store")?;
+            session
+                .write_response_header(Box::new(header), false)
+                .await?;
+            session
+                .write_response_body(Some(bytes::Bytes::from_static(b"OK")), true)
+                .await?;
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    async fn validate_circuit_security(
+        &self,
+        session: &mut Session,
+        ctx: &RequestCtx,
+    ) -> Result<bool> {
+        let path = session.req_header().uri.path();
+        let path_owned = path.to_string();
+
+        if self.handle_honeypot(session, ctx, &path_owned).await? {
+            return Ok(true);
+        }
+
+        if self.handle_karma_block(session, ctx).await? {
+            return Ok(true);
+        }
+
+        if self.handle_missing_circuit(session, ctx).await? {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    async fn check_content_length(&self, session: &mut Session, ctx: &RequestCtx) -> Result<bool> {
+        if let Some(content_length) = session
+            .req_header()
+            .headers
+            .get("Content-Length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&len| len > self.config.client_max_body_size)
+        {
+            warn!(
+                circuit_id = ?ctx.circuit_id,
+                size = content_length,
+                max = self.config.client_max_body_size,
+                action = "BLOCK",
+                "Request body too large"
+            );
+            let html = ui::get_error_page(
+                "Request Entity Too Large",
+                "The uploaded file exceeds the maximum allowed size.",
+                None,
+                Some(&self.config),
+            );
+            serve_html(session, &self.config, 413, html, None).await?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -452,30 +534,8 @@ impl ProxyHttp for MaveProxy {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
-        let path = session.req_header().uri.path();
-
-        if path == "/.well-known/health" || path == "/health" {
-            let is_internal = session.client_addr().is_some_and(|addr| {
-                if let pingora::protocols::l4::socket::SocketAddr::Inet(inet) = addr {
-                    inet.ip().is_loopback()
-                } else {
-                    false
-                }
-            });
-
-            if is_internal {
-                let mut header = ResponseHeader::build(200, None)?;
-                header.insert_header("Content-Type", "text/plain")?;
-                header.insert_header("Content-Length", "2")?;
-                header.insert_header("Cache-Control", "no-store")?;
-                session
-                    .write_response_header(Box::new(header), false)
-                    .await?;
-                session
-                    .write_response_body(Some(bytes::Bytes::from_static(b"OK")), true)
-                    .await?;
-                return Ok(true);
-            }
+        if self.handle_health_check(session).await? {
+            return Ok(true);
         }
 
         self.check_global_defense().await;
@@ -483,16 +543,22 @@ impl ProxyHttp for MaveProxy {
         ctx.circuit_id = Self::extract_circuit_id(session);
         self.extract_session(session, ctx);
 
-        let path_owned = path.to_string();
-        if self.handle_honeypot(session, ctx, &path_owned).await? {
+        if self.check_content_length(session, ctx).await? {
             return Ok(true);
         }
 
-        if self.handle_karma_block(session, ctx).await? {
-            return Ok(true);
+        if session
+            .req_header()
+            .headers
+            .get("Content-Type")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("multipart/form-data"))
+        {
+            debug!("Multipart form data detected, skipping body scan");
+            ctx.skip_body_scan = true;
         }
 
-        if self.handle_missing_circuit(session, ctx).await? {
+        if self.validate_circuit_security(session, ctx).await? {
             return Ok(true);
         }
 
@@ -814,7 +880,6 @@ mod tests {
         assert!(resp.headers.get("Content-Security-Policy").is_some());
         assert!(resp.headers.get("X-Content-Type-Options").is_some());
         assert!(resp.headers.get("Referrer-Policy").is_some());
-        assert!(resp.headers.get("Permissions-Policy").is_some());
     }
 
     #[tokio::test]

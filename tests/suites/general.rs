@@ -8,6 +8,28 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 #[tokio::test]
+async fn test_request_body_size_limit() {
+    let backend_port = spawn_mock_backend().await;
+    let mut config = (*create_test_config(backend_port)).clone();
+    config.client_max_body_size = 100;
+    let config = Arc::new(config);
+    let (proxy_port, _) = spawn_proxy(config).await;
+
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let body = vec![0u8; 200];
+
+    let resp = client
+        .post(format!("http://127.0.0.1:{proxy_port}/upload"))
+        .header("X-Circuit-Id", "test_size_limit")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 413);
+}
+
+#[tokio::test]
 async fn test_basic_request() {
     let backend_port = spawn_mock_backend().await;
     let config = create_test_config(backend_port);
